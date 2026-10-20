@@ -112,23 +112,48 @@ Automates applications on external company portals and ATS platforms (Greenhouse
 
 ---
 
-## 🔧 How to Configure
+## 🔧 How to Configure (Must Complete Before Running)
 
-All configurations are located inside the `/config` folder:
+> [!IMPORTANT]
+> **Mandatory Setup Checklist:**  
+> Because credentials and personal data are protected by `.gitignore`, you must set up your local configuration files before starting the bot or dashboard.
 
-1. **`config/personals.py`**:
-   - Fill in your personal details (name, email, phone number, address, LinkedIn profile URL, GitHub URL, portfolio, etc.).
-2. **`config/questions.py`**:
-   - Provide answers to common application screening questions (notice period, expected compensation, work authorization, visa sponsorship, etc.).
-   - Set `default_resume_path` to your resume PDF file (e.g. `"Shirish_Maharjan_CV copy.pdf"`).
-3. **`config/search.py`**:
-   - Set search terms and target job titles (e.g., `DevOps Engineer`, `Cloud Engineer`, `Platform Engineer`, `AI Engineer`).
-   - Configure location (e.g., `"Worldwide"` or `"China"`) and work type (`["Remote"]` or `["On-site", "Hybrid"]`).
-   - Define blacklist keywords to exclude unwanted postings (clearances, residency restrictions, etc.).
-4. **`config/settings.py`**:
-   - Configure bot behaviors (daily application limits, delays, stealth mode, keep-screen-awake).
-5. **`credentials.json` (Optional for Gmail Tracker)**:
-   - Place your Google Cloud OAuth2 credentials file as `credentials.json` in the project root to enable automated Gmail application sync.
+### 1. Create Your Configuration Files from Examples
+Run the following commands to create your local config files:
+```bash
+cp config/secrets.example.py config/secrets.py
+cp config/personals.example.py config/personals.py
+```
+
+### 2. Configure Each File in `/config`
+
+1. **`config/secrets.py`**:
+   - Enter your LinkedIn email/username and password (optional; if left blank, you can log in manually in the browser).
+   - Set `use_AI = True` and configure your local Ollama endpoint (`llm_api_url = "http://localhost:11434/v1/"`).
+   - Specify your model names (`llm_model = "qwen2.5:7b"`, `gmail_ai_model = "qwen3:1.7b"`, `browser_vision_model = "qwen3.5:2b"`).
+
+2. **`config/personals.py`**:
+   - Enter your personal details (first name, last name, email, phone number, address, city, state, country, zipcode).
+   - Add your LinkedIn profile URL, GitHub profile URL, and portfolio link.
+
+3. **`config/questions.py`**:
+   - **Resume Path**: Set `default_resume_path = "your_resume.pdf"` to match the PDF resume you place in the project root.
+   - **Screening Answers**: Provide default answers for common application questions (expected salary, current CTC, notice period, work authorization, visa sponsorship).
+   - **AI Context (`user_information_all`)**: Paste your full CV/resume text into the `user_information_all` string. The local AI models use this context to answer open-ended and technical application questions.
+
+4. **`config/search.py`**:
+   - Set your target job titles (e.g., `DevOps Engineer`, `Cloud Engineer`, `Platform Engineer`, `SRE`, `AI Engineer`).
+   - Choose your search location (e.g., `"Worldwide"`, `"United States"`, `"China"`) and work type (`["Remote"]`, `["On-site", "Hybrid"]`).
+   - Define blacklist keywords in `bad_words` to skip postings requiring clearances, specific citizenships, or residency restrictions.
+
+5. **`config/settings.py`**:
+   - Adjust operational settings (daily application limit, click intervals, stealth mode).
+
+6. **Add Your Resume File**:
+   - Place your resume PDF in the repository root directory matching the name configured in `default_resume_path` (e.g., `resume.pdf`).
+
+7. **`credentials.json` (Optional - for Gmail Sync)**:
+   - If using the Gmail tracker, place your Google Cloud OAuth2 client credentials JSON as `credentials.json` in the root folder.
 
 ---
 
