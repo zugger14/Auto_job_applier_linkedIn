@@ -22,7 +22,7 @@ fi
 
 # Start the Flask dashboard in the background
 echo "✅ Starting dashboard (app.py) on http://localhost:5001 ..."
-python3 app.py &
+./venv/bin/python app.py &
 DASHBOARD_PID=$!
 
 echo "Dashboard PID: $DASHBOARD_PID"

@@ -118,8 +118,8 @@ def run_batch_apply():
             print("⚡ Daily limit of 20 external jobs reached. Stopping further applications.")
             break
         print(f"\n[{count+1}/{len(external_jobs)}] Starting External Apply Engine for: {link}")
-        comp = rows[row_idx].get('Company Name', '')
-        title = rows[row_idx].get('Job Title', '')
+        comp = rows[row_idx].get('Company') or rows[row_idx].get('Company Name', '')
+        title = rows[row_idx].get('Title') or rows[row_idx].get('Job Title', '')
         attempt_success = False
         for attempt in range(1, MAX_RETRIES + 1):
             try:

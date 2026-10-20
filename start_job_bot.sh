@@ -34,7 +34,7 @@ lsof -ti :5001 | xargs kill -9 2>/dev/null
 
 # Start the web dashboard in the background
 echo "📊 Starting Web Dashboard (app.py) in the background..."
-python3 app.py &
+./venv/bin/python app.py &
 DASHBOARD_PID=$!
 
 sleep 2 # Give the dashboard a second to boot up
@@ -49,10 +49,16 @@ echo "--------------------------------------------------------"
 export PYTHONWARNINGS="ignore::UserWarning"
 
 # Catch Ctrl+C to kill the background dashboard cleanly
-trap "echo 'Stopping dashboard...'; kill $DASHBOARD_PID; exit" SIGINT SIGTERM
+trap "echo 'Stopping dashboard...'; kill $DASHBOARD_PID 2>/dev/null; exit" SIGINT SIGTERM
 
 # Start the main bot
-python3 -W ignore runAiBot.py 2>/dev/null
+./venv/bin/python -W ignore runAiBot.py 2>/dev/null
 
-# Cleanup if the bot exits naturally
-kill $DASHBOARD_PID 2>/dev/null
+echo ""
+echo "========================================================"
+echo " LinkedIn Bot finished its session."
+echo " The Web Dashboard is STILL RUNNING at: http://localhost:5001"
+echo " You can view applications, scan Gmail, or apply externally."
+echo " Press Ctrl+C in this terminal whenever you want to stop the dashboard."
+echo "========================================================"
+wait $DASHBOARD_PID

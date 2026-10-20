@@ -260,31 +260,70 @@ def scan_gmail():
         traceback.print_exc()
         return jsonify({"success": False, "error": str(e)}), 500
 
+import threading
+
 _external_apply_running = False
+_external_apply_logs = []
+_external_apply_lock = threading.Lock()
+
+class ExternalLogCapture:
+    def __init__(self, original_stream):
+        self.original_stream = original_stream
+
+    def write(self, message):
+        if self.original_stream:
+            self.original_stream.write(message)
+            self.original_stream.flush()
+        if message and message.strip():
+            ts = datetime.now().strftime('%H:%M:%S')
+            line = message.strip()
+            # If line does not already start with bracketed time, prepend
+            if not line.startswith('['):
+                formatted = f"[{ts}] {line}"
+            else:
+                formatted = line
+            with _external_apply_lock:
+                _external_apply_logs.append(formatted)
+                if len(_external_apply_logs) > 600:
+                    _external_apply_logs.pop(0)
+
+    def flush(self):
+        if self.original_stream:
+            self.original_stream.flush()
 
 @app.route('/apply-external', methods=['POST'])
 def apply_external():
     """
-    Triggers the robust Playwright-based external apply engine in the background.
+    Triggers the Playwright-based external apply engine with live log streaming.
     """
     global _external_apply_running
     if _external_apply_running:
         return jsonify({"success": True, "running": True, "message": "External application batch is already in progress."})
 
     def run_worker():
-        global _external_apply_running
+        global _external_apply_running, _external_apply_logs
         _external_apply_running = True
+        with _external_apply_lock:
+            _external_apply_logs.clear()
+            _external_apply_logs.append(f"[{datetime.now().strftime('%H:%M:%S')}] 🚀 Initializing Autonomous External Apply Engine (Playwright + Vision LLM)...")
+
+        old_stdout = sys.stdout
+        old_stderr = sys.stderr
+        capture = ExternalLogCapture(old_stdout)
+        sys.stdout = capture
+        sys.stderr = capture
         try:
-            print("\n[Dashboard] 🚀 Triggering batch external application worker...", flush=True)
             from apply_external_jobs import run_batch_apply
             run_batch_apply()
-            print("[Dashboard] ✅ Batch external application worker finished.", flush=True)
+            print(f"[{datetime.now().strftime('%H:%M:%S')}] ✅ All external job applications completed!")
         except Exception as e:
-            print(f"❌ [Dashboard] Error in external apply worker: {e}", flush=True)
+            print(f"[{datetime.now().strftime('%H:%M:%S')}] ❌ Error in external apply worker: {e}")
+            traceback.print_exc()
         finally:
+            sys.stdout = old_stdout
+            sys.stderr = old_stderr
             _external_apply_running = False
 
-    import threading
     t = threading.Thread(target=run_worker, daemon=True)
     t.start()
     return jsonify({"success": True, "running": True, "message": "Started external application worker in background."})
@@ -293,6 +332,16 @@ def apply_external():
 def apply_external_status():
     global _external_apply_running
     return jsonify({"running": _external_apply_running})
+
+@app.route('/apply-external-logs', methods=['GET'])
+def apply_external_logs():
+    global _external_apply_running, _external_apply_logs
+    with _external_apply_lock:
+        logs_copy = list(_external_apply_logs)
+    return jsonify({
+        "running": _external_apply_running,
+        "logs": logs_copy
+    })
 
 def parse_csv_date(d_str):
     if not d_str or str(d_str).strip().lower() in ['pending', 'unknown', 'none', '']:
