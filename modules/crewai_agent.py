@@ -134,57 +134,25 @@ AUTONOMOUS DECISION-MAKING RULES:
             if attempt == 2:
                 raise
 
-def run_browser_use_apply(application_link: str, cv_data: str):
+def run_browser_use_apply(application_link: str, cv_data: str = "", company_name: str = "", job_title: str = ""):
     """
-    Main synchronous wrapper function called by runAiBot.py.
+    Main synchronous wrapper function called by apply_external_jobs.py and runAiBot.py.
+    Uses the robust Playwright-based external apply engine.
     """
-    # Validate application_link
     if not application_link or not isinstance(application_link, str):
-        print("⚠️ No application link provided. Skipping.")
+        print("⚠️ No application link provided. Skipping.", flush=True)
         return False
     if 'example.com' in application_link.lower():
-        print(f"⚠️ Skipping placeholder URL in run_browser_use_apply: {application_link}")
+        print(f"⚠️ Skipping placeholder URL: {application_link}", flush=True)
         return False
-    # Fix empty CV if user didn't populate the big text block
-    cv_data = get_cv_data(cv_data)
 
-    print("--- 🚀 Starting Browser-Use Orchestration ---")
-    
-    # Step 1: Run Browser-Use to Execute the Web Form Filling
-    print("🌐 Browser-Use: Opening Playwright to fill the web form using raw CV data...")
+    print("--- 🚀 Starting Intelligent External Apply Engine ---", flush=True)
     try:
-        # We must use asyncio.run to execute the async browser-use inside our sync python script
-        # Attempt the browser-use execution with retries
-        for attempt in range(3):
-            try:
-                result = asyncio.run(execute_browser_use(application_link, str(cv_data)))
-                print(f"✅ Browser-Use Execution Result (attempt {attempt+1}):\n{result}")
-                break
-            except Exception as e:
-                print(f"⚠️ Attempt {attempt+1} failed with error: {e}")
-                if attempt == 2:
-                    raise
-        
-        # --- LOGGING FOR DEBUGGING & ACCURACY CHECKING ---
-        log_dir = os.path.join("logs", "external_applications")
-        os.makedirs(log_dir, exist_ok=True)
-        # Create a safe filename from the URL
-        safe_url = "".join([c if c.isalnum() else "_" for c in application_link])[:50]
-        log_file_path = os.path.join(log_dir, f"{safe_url}.txt")
-        
-        with open(log_file_path, "w", encoding="utf-8") as f:
-            f.write(f"URL: {application_link}\n")
-            f.write("="*50 + "\n")
-            f.write("RAW CV PROFILE (What was sent to the form filler):\n")
-            f.write(str(cv_data) + "\n\n")
-            f.write("="*50 + "\n")
-            f.write("BROWSER-USE ACTIONS (What the AI typed and clicked):\n")
-            f.write(str(result) + "\n")
-            
-        print(f"📄 Saved execution log for your review at: {log_file_path}")
-        return True
+        from modules.external_apply_engine import run_external_apply
+        success = run_external_apply(application_link, cv_data=cv_data, company_name=company_name, job_title=job_title)
+        return success
     except Exception as e:
-        print(f"❌ Browser-Use encountered an error: {e}")
+        print(f"❌ External Apply Engine error: {e}", flush=True)
         return False
 
 # For local testing if you run this script directly

@@ -17,11 +17,11 @@ echo "============================================="
 echo "   STARTING AI EXTERNAL APPLICATIONS JOB     "
 echo "============================================="
 echo "This will read the 'Apply Externally' jobs from your dashboard,"
-echo "and use the Browser-Use Agent to automatically fill them out."
+echo "and use the Playwright AI Apply Engine to automatically fill them out."
 echo ""
 
 # Run the batch script
-python apply_external_jobs.py
+./venv/bin/python apply_external_jobs.py "$@"
 
 echo ""
 echo "Batch job finished."

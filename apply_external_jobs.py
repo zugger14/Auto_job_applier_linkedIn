@@ -118,12 +118,14 @@ def run_batch_apply():
             print("⚡ Daily limit of 20 external jobs reached. Stopping further applications.")
             break
         print(f"\n[{count+1}/{len(external_jobs)}] Starting AI Agent for: {link}")
+        comp = rows[row_idx].get('Company Name', '')
+        title = rows[row_idx].get('Job Title', '')
         attempt_success = False
         for attempt in range(1, MAX_RETRIES + 1):
             try:
-                success = run_browser_use_apply(link, cq.user_information_all)
+                success = run_browser_use_apply(link, cq.user_information_all, company_name=comp, job_title=title)
                 if success:
-                    print(f"✅ Successfully finished Browser-Use run on attempt {attempt}!")
+                    print(f"✅ Successfully applied externally on attempt {attempt}!")
                     rows[row_idx]['Status'] = 'Externally Applied'
                     rows[row_idx]['Date Applied'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
                     rows[row_idx]['Failed Attempts'] = '0'

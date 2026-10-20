@@ -258,6 +258,41 @@ def scan_gmail():
         import traceback
         print(f"❌ [Dashboard] Exception in /scan-gmail: {e}", flush=True)
         traceback.print_exc()
+        return jsonify({"success": False, "error": str(e)}), 500
+
+_external_apply_running = False
+
+@app.route('/apply-external', methods=['POST'])
+def apply_external():
+    """
+    Triggers the robust Playwright-based external apply engine in the background.
+    """
+    global _external_apply_running
+    if _external_apply_running:
+        return jsonify({"success": True, "running": True, "message": "External application batch is already in progress."})
+
+    def run_worker():
+        global _external_apply_running
+        _external_apply_running = True
+        try:
+            print("\n[Dashboard] 🚀 Triggering batch external application worker...", flush=True)
+            from apply_external_jobs import run_batch_apply
+            run_batch_apply()
+            print("[Dashboard] ✅ Batch external application worker finished.", flush=True)
+        except Exception as e:
+            print(f"❌ [Dashboard] Error in external apply worker: {e}", flush=True)
+        finally:
+            _external_apply_running = False
+
+    import threading
+    t = threading.Thread(target=run_worker, daemon=True)
+    t.start()
+    return jsonify({"success": True, "running": True, "message": "Started external application worker in background."})
+
+@app.route('/apply-external-status', methods=['GET'])
+def apply_external_status():
+    global _external_apply_running
+    return jsonify({"running": _external_apply_running})
 
 def parse_csv_date(d_str):
     if not d_str or str(d_str).strip().lower() in ['pending', 'unknown', 'none', '']:
