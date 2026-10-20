@@ -5,6 +5,9 @@ import csv
 from datetime import datetime, timedelta
 import shutil
 import os
+import sys
+import traceback
+import threading
 
 app = Flask(__name__)
 CORS(app)
@@ -272,8 +275,11 @@ class ExternalLogCapture:
 
     def write(self, message):
         if self.original_stream:
-            self.original_stream.write(message)
-            self.original_stream.flush()
+            try:
+                self.original_stream.write(message)
+                self.original_stream.flush()
+            except Exception:
+                pass
         if message and message.strip():
             ts = datetime.now().strftime('%H:%M:%S')
             line = message.strip()
@@ -289,7 +295,10 @@ class ExternalLogCapture:
 
     def flush(self):
         if self.original_stream:
-            self.original_stream.flush()
+            try:
+                self.original_stream.flush()
+            except Exception:
+                pass
 
 @app.route('/apply-external', methods=['POST'])
 def apply_external():
@@ -303,22 +312,29 @@ def apply_external():
     def run_worker():
         global _external_apply_running, _external_apply_logs
         _external_apply_running = True
-        with _external_apply_lock:
-            _external_apply_logs.clear()
-            _external_apply_logs.append(f"[{datetime.now().strftime('%H:%M:%S')}] 🚀 Initializing Autonomous External Apply Engine (Playwright + Vision LLM)...")
-
         old_stdout = sys.stdout
         old_stderr = sys.stderr
-        capture = ExternalLogCapture(old_stdout)
-        sys.stdout = capture
-        sys.stderr = capture
         try:
-            from apply_external_jobs import run_batch_apply
-            run_batch_apply()
-            print(f"[{datetime.now().strftime('%H:%M:%S')}] ✅ All external job applications completed!")
-        except Exception as e:
-            print(f"[{datetime.now().strftime('%H:%M:%S')}] ❌ Error in external apply worker: {e}")
-            traceback.print_exc()
+            with _external_apply_lock:
+                _external_apply_logs.clear()
+                _external_apply_logs.append(f"[{datetime.now().strftime('%H:%M:%S')}] 🚀 Initializing Autonomous External Apply Engine (Playwright + Vision LLM)...")
+
+            capture = ExternalLogCapture(old_stdout)
+            sys.stdout = capture
+            sys.stderr = capture
+            try:
+                from apply_external_jobs import run_batch_apply
+                run_batch_apply()
+                print(f"[{datetime.now().strftime('%H:%M:%S')}] ✅ All external job applications completed!")
+            except Exception as e:
+                print(f"[{datetime.now().strftime('%H:%M:%S')}] ❌ Error in external apply worker: {e}")
+                traceback.print_exc()
+            finally:
+                sys.stdout = old_stdout
+                sys.stderr = old_stderr
+        except Exception as outer_e:
+            with _external_apply_lock:
+                _external_apply_logs.append(f"[{datetime.now().strftime('%H:%M:%S')}] ❌ Fatal worker initialization error: {outer_e}")
         finally:
             sys.stdout = old_stdout
             sys.stderr = old_stderr

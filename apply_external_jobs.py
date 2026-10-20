@@ -83,6 +83,7 @@ def run_batch_apply():
         except (ValueError, TypeError):
             return 0
 
+    print(f"[{datetime.now().strftime('%H:%M:%S')}] 📋 Reading application history from {csv_path}...", flush=True)
     external_jobs = []
     for i, row in enumerate(rows):
         ext_link = row.get('External Job link', '')
@@ -94,14 +95,16 @@ def run_batch_apply():
             sanitized_link = ext_link.strip()
             if not sanitized_link.lower().startswith(('http://', 'https://')):
                 sanitized_link = f"https://{sanitized_link}"
+            comp_name = row.get('Company') or row.get('Company Name') or 'Company'
+            print(f"[{datetime.now().strftime('%H:%M:%S')}] 🌐 Checking reachability for: {comp_name} ({sanitized_link[:60]}...)", flush=True)
             if is_url_reachable(sanitized_link):
                 if 'example.com' in sanitized_link:
-                    print(f"⚠️ Skipping placeholder URL: {sanitized_link}")
+                    print(f"⚠️ Skipping placeholder URL: {sanitized_link}", flush=True)
                     row['Failed Attempts'] = str(failed_attempts + 1)
                     continue
                 external_jobs.append((i, sanitized_link))
             else:
-                print(f"⚠️ Skipping unreachable URL: {sanitized_link}")
+                print(f"⚠️ Skipping unreachable URL: {sanitized_link}", flush=True)
                 row['Failed Attempts'] = str(failed_attempts + 1)
                 # Write out the updated failure count immediately
                 with open(csv_path, 'w', encoding='utf-8', newline='') as file:
@@ -109,7 +112,11 @@ def run_batch_apply():
                     writer.writeheader()
                     writer.writerows(rows)
 
-    print(f"Found {len(external_jobs)} external jobs to apply to.")
+    if not external_jobs:
+        print(f"[{datetime.now().strftime('%H:%M:%S')}] ℹ️ No eligible external jobs found to apply to.", flush=True)
+        return
+
+    print(f"[{datetime.now().strftime('%H:%M:%S')}] 🎯 Found {len(external_jobs)} external job(s) ready to apply.", flush=True)
 
     counters = load_counters()
     for count, (row_idx, link) in enumerate(external_jobs):
