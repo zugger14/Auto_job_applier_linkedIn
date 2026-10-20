@@ -67,12 +67,6 @@ Automates applications on external company portals and ATS platforms (Greenhouse
 
 ---
 
-### 🛠️ Unified Environment & Scripts
-* **Single Environment**: Consolidated all virtual environments into a single, clean `./venv` with Playwright browsers pre-installed.
-* **One-Click Launch**: Run `./start_job_bot.sh` to start the bot and dashboard instantly.
-
----
-
 ## ⚙️ How to Install
 
 ### Prerequisites
