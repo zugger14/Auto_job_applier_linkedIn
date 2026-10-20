@@ -11,15 +11,68 @@ Click on above image to watch the demo or use this link https://youtu.be/gMbB1fW
 - [Introduction](#linkedin-ai-auto-job-applier-)
 - [Demo Video](#%EF%B8%8F-see-it-in-action)
 - [Index](#-content)
+- [Modern Features & Architecture (2026)](#-modern-features--architecture-2026)
 - [Install](#%EF%B8%8F-how-to-install)
 - [Configure](#-how-to-configure)
 - [Contributor Guidelines](#‍-contributor-guidelines)
-- [Updates](%EF%B8%8F-major-updates-history)
+- [Updates](#%EF%B8%8F-major-updates-history)
 - [Disclaimer](#-disclaimer)
 - [Terms and Conditions](#%EF%B8%8F-terms-and-conditions)
 - [License](#%EF%B8%8F-license)
 - [Socials](#-socials)
 - [Support and Discussions](#-community-support-and-discussions)
+
+<br>
+
+## 🚀 Modern Features & Architecture (2026)
+
+### 📊 Modern Web Dashboard (`http://localhost:5001`)
+* **Real-Time Analytics**: View live metrics on Total Applied, Easy Applied, Externally Applied, Daily Limits, In Review, and Rejections.
+* **One-Click Actions**:
+  * **Start LinkedIn Bot**: Launches the Selenium stealth Easy Apply engine.
+  * **Apply Externally (Playwright)**: Triggers autonomous Playwright external application runner.
+  * **Scan Gmail**: Runs automated OAuth2 scan to sync application statuses directly from your inbox.
+* **Live Log Stream Modal**: Streams real-time stdout and stderr output from background tasks directly in your browser.
+* **Integrated Job History Table**: Filterable and searchable table with direct links to applied jobs and 1-click **Gmail search links** (supporting multi-account indexing `u/0`, `u/1`, etc.).
+* **Granular Data Management**: Safely erase monthly data, prune records older than one year, or clear history with confirmation dialogs.
+
+---
+
+### 👁️ Autonomous External Apply Engine (Playwright + Local Vision LLM)
+Automates applications on external company portals and ATS platforms (Greenhouse, Lever, Ashby, Workday, BambooHR, etc.):
+* **Vision LLM Primary Evaluator (`qwen3.5:2b`)**:
+  * Evaluates full-page screenshots on load to classify:
+    * `NO_JOB`: Detects expired, closed, filled, or 404 postings immediately and skips redundant retries.
+    * `CLICK_APPLY`: Identifies job description landing pages and clicks the Apply button (`Apply on company website`, `Apply Now`, `Apply for this job`, etc.).
+    * `CAPTCHA`: Detects Cloudflare Turnstile or human verification challenges and triggers automated clearance.
+    * `FORM_READY`: Validates that application fields are active and proceeds with filling.
+* **Tab & Popup Tracking**: Automatically detects external links that open in a new tab (`target="_blank"` or `window.open`) and switches active control to the application form.
+* **Embedded Iframe Support**: Automatically locates and queries ATS forms embedded inside company `<iframe>` wrappers (e.g. `#grnhse_iframe`).
+* **Multi-Step Form Advancement**: Automatically loops through up to 5 multi-step wizard stages (`Next`, `Continue`, `Proceed`, `Review & Submit`, `Save & Next`, `Step 2/3/4`), filling intermediate questions until the final submission button is reached.
+* **Post-Submission Verification**: Captures final screenshots and uses the Vision LLM to verify application confirmation notices.
+
+---
+
+### 📬 Gmail Application Status Tracker (Local LLM)
+* Secure Google OAuth2 integration with automatic token refreshing.
+* Uses lightweight local LLM (`qwen3:1.7b`) to parse incoming company emails, categorizing statuses (`In Review`, `Rejected`, `Interviewing`) and updating candidate CSV databases automatically.
+
+---
+
+### 🧠 Streamlined Local AI Model Roles (Ollama)
+| Component | Local Model | Purpose |
+| :--- | :--- | :--- |
+| **LinkedIn Easy Apply** | `qwen2.5:7b` | Rapid, accurate application question answering |
+| **Gmail Tracker** | `qwen3:1.7b` | Ultra-fast email reading and status classification |
+| **External Vision Engine** | `qwen3.5:2b` | Sub-12s vision reasoning for browser screenshots & multi-step forms |
+
+*Legacy frameworks (`deepseek`, `crewai`) have been eliminated in favor of direct local Ollama inference.*
+
+---
+
+### 🛠️ Unified Environment & Scripts
+* **Single Environment**: Consolidated all virtual environments into a single, clean `./venv` with Playwright browsers pre-installed.
+* **One-Click Launch**: Run `./start_job_bot.sh` to start the bot and dashboard instantly.
 
 <br>
 
@@ -192,6 +245,13 @@ Once your code is tested, your changes will be merged to the `main` branch in ne
 [back to index](#-content)
 
 ## 🗓️ Major Updates History:
+### Oct 20, 2026
+- **Modern Web Dashboard**: Real-time stats, log streamer, 1-click execution triggers, multi-account Gmail search links (`u/0`, `u/1`), and granular monthly/annual data deletion.
+- **Autonomous External Apply Engine**: Powered by Playwright and local Vision LLM (`qwen3.5:2b`) with automatic CAPTCHA detection, new tab/popup handling, iframe ATS support, multi-step progression, and post-submission verification.
+- **Automated Gmail Application Tracker**: Secure OAuth2 inbox scanning using local LLM (`qwen3:1.7b`) to automatically detect and classify application confirmations and rejections.
+- **Consolidated Local AI Models**: Switched to fast, direct Ollama inference (`qwen2.5:7b` for Easy Apply, `qwen3:1.7b` for Gmail, `qwen3.5:2b` for Vision) and removed deprecated frameworks.
+- **Unified Environment**: Consolidated virtual environments into a single `./venv` with Playwright browsers pre-installed, plus one-click launch via `./start_job_bot.sh`.
+
 ### Jan 20, 2026
 - You can now simultaneously use chrome, while bot continues applying in a new window
 
