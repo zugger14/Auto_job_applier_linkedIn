@@ -165,11 +165,11 @@ This script launches the **Web Dashboard** at **`http://localhost:5001`** and pr
 ## 🗓️ Major Updates
 
 ### Oct 20, 2026
-- **Modern Web Dashboard**: Real-time stats, log streamer, 1-click execution triggers, multi-account Gmail search links (`u/0`, `u/1`), and granular monthly/annual data deletion.
+- **Modern Web Dashboard**: Real-time stats, interactive Live Execution Console modal with real-time streaming logs for external applications, top-bar "Live Logs" inspector, multi-account Gmail search links (`u/0`, `u/1`), and granular monthly/annual data deletion.
 - **Autonomous External Apply Engine**: Powered by Playwright and local Vision LLM (`qwen3.5:2b`) with automatic CAPTCHA detection, new tab/popup handling, iframe ATS support, multi-step progression, and post-submission verification.
 - **Automated Gmail Application Tracker**: Secure OAuth2 inbox scanning using local LLM (`qwen3:1.7b`) to automatically detect and classify application confirmations and rejections.
-- **Consolidated Local AI Models**: Switched to fast, direct Ollama inference (`qwen2.5:7b` for Easy Apply, `qwen3:1.7b` for Gmail, `qwen3.5:2b` for Vision) and removed deprecated frameworks.
-- **Unified Environment**: Consolidated virtual environments into a single `./venv` with Playwright browsers pre-installed, plus one-click launch via `./start_job_bot.sh`.
+- **Consolidated Local AI Models**: Switched to fast, direct Ollama inference (`qwen2.5:7b` for Easy Apply, `qwen3:1.7b` for Gmail, `qwen3.5:2b` for Vision) and completely removed deprecated frameworks (`deepseek`, `crewai`, legacy stubs).
+- **Unified Environment & Persistent Launch**: Consolidated virtual environments into a single `./venv` with Playwright browsers pre-installed, plus persistent dashboard hosting in `./start_job_bot.sh` and `./start_dashboard.sh`.
 
 *For historical changelogs prior to Oct 2026, refer to the [upstream repository](https://github.com/GodsScion/Auto_job_applier_linkedIn).*
 
