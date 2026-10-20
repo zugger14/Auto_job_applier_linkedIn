@@ -35,6 +35,9 @@ def createChromeSession(isRetry: bool = False):
     options = uc.ChromeOptions() if stealth_mode else Options()
     if run_in_background:   options.add_argument("--headless")
     if disable_extensions:  options.add_argument("--disable-extensions")
+    if sys.platform.startswith('linux'):
+        options.add_argument("--no-sandbox")
+        options.add_argument("--disable-dev-shm-usage")
 
     print_lg("IF YOU HAVE MORE THAN 10 TABS OPENED, PLEASE CLOSE OR BOOKMARK THEM! Or it's highly likely that application will just open browser and not do anything!")
     profile_dir = find_default_profile_directory()
@@ -68,6 +71,9 @@ def createChromeSession(isRetry: bool = False):
             retry_options = uc.ChromeOptions()
             if run_in_background: retry_options.add_argument("--headless")
             if disable_extensions: retry_options.add_argument("--disable-extensions")
+            if sys.platform.startswith('linux'):
+                retry_options.add_argument("--no-sandbox")
+                retry_options.add_argument("--disable-dev-shm-usage")
             retry_options.add_argument(f"--user-data-dir={get_default_temp_profile()}")
             driver = uc.Chrome(options=retry_options)
     else: 
