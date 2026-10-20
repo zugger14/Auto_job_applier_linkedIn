@@ -1,3 +1,4 @@
+from __future__ import annotations
 '''
 Author:     Sai Vignesh Golla
 LinkedIn:   https://www.linkedin.com/in/saivigneshgolla/
@@ -64,7 +65,8 @@ def get_default_temp_profile() -> str:
         return "--user-data-dir=C:\\temp\\auto-job-apply-profile"
     elif sys.platform.startswith('linux'):
         return str(home / ".auto-job-apply-profile")
-    return str(home / "Library" / "Application Support" / "Google" / "Chrome" / "auto-job-apply-profile")
+    # On macOS, avoid ~/Library/Application Support/Google/Chrome which has TCC / Operation Not Permitted locks
+    return str(home / ".auto-job-apply-profile")
 
 
 def find_default_profile_directory() -> str | None:
@@ -172,15 +174,14 @@ def manual_login_retry(is_logged_in: callable, limit: int = 2) -> None:
     '''
     count = 0
     while not is_logged_in():
-        from pyautogui import alert
-        print_lg("Seems like you're not logged in!")
-        button = "Confirm Login"
-        message = 'After you successfully Log In, please click "{}" button below.'.format(button)
+        print_lg("Seems like you're not logged in! (Maybe there is a CAPTCHA?)")
         if count > limit:
-            button = "Skip Confirmation"
-            message = 'If you\'re seeing this message even after you logged in, Click "{}". Seems like auto login confirmation failed!'.format(button)
+            print_lg("If you're seeing this message even after you logged in, seems like auto login confirmation failed!")
+            input("Press Enter to skip confirmation and continue anyway...")
+            return
+        else:
+            input("Please log in manually or solve the CAPTCHA in Chrome, then press Enter here in the terminal to continue...")
         count += 1
-        if alert(message, "Login Required", button) and count > limit: return
 
 
 

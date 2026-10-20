@@ -1,3 +1,4 @@
+from __future__ import annotations
 '''
 Author:     Sai Vignesh Golla
 LinkedIn:   https://www.linkedin.com/in/saivigneshgolla/
@@ -89,7 +90,7 @@ def validate_questions() -> None | ValueError | TypeError:
     check_string(website, "website")
     check_string(linkedIn, "linkedIn")
     check_int(desired_salary, "desired_salary")
-    check_string(us_citizenship, "us_citizenship", ["U.S. Citizen/Permanent Resident", "Non-citizen allowed to work for any employer", "Non-citizen allowed to work for current employer", "Non-citizen seeking work authorization", "Canadian Citizen/Permanent Resident", "Other"])
+    check_string(us_citizenship, "us_citizenship", ["", "U.S. Citizen/Permanent Resident", "Non-citizen allowed to work for any employer", "Non-citizen allowed to work for current employer", "Non-citizen seeking work authorization", "Canadian Citizen/Permanent Resident", "Other"])
     check_string(linkedin_headline, "linkedin_headline")
     check_int(notice_period, "notice_period")
     check_int(current_ctc, "current_ctc")
@@ -162,14 +163,14 @@ def validate_secrets() -> None | ValueError | TypeError:
     check_string(password, "password", min_length=5)
 
     check_boolean(use_AI, "use_AI")
-    check_string(llm_api_url, "llm_api_url", min_length=5)
+    check_string(llm_api_url, "llm_api_url", min_length=0)
     check_string(llm_api_key, "llm_api_key")
     # check_string(llm_embedding_model, "llm_embedding_model")
     check_boolean(stream_output, "stream_output")
     
     ##> ------ Yang Li : MARKYangL - Feature ------
     # Validate DeepSeek configuration
-    check_string(ai_provider, "ai_provider", ["openai", "deepseek"])
+    check_string(ai_provider, "ai_provider", ["openai", "deepseek", "gemini"])
 
     ##> ------ Tim L : tulxoro - Refactor ------
     if ai_provider == "deepseek":

@@ -1,3 +1,4 @@
+from __future__ import annotations
 import google.generativeai as genai
 from config.secrets import llm_model, llm_api_key
 from config.settings import showAiErrorAlerts

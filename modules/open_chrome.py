@@ -1,3 +1,4 @@
+from __future__ import annotations
 '''
 Author:     Sai Vignesh Golla
 LinkedIn:   https://www.linkedin.com/in/saivigneshgolla/
@@ -45,13 +46,32 @@ def createChromeSession(isRetry: bool = False):
         print_lg("Logging in with a guest profile, Web history will not be saved!")
         options.add_argument(f"--user-data-dir={get_default_temp_profile()}")
     if stealth_mode:
-        # try: 
-        #     driver = uc.Chrome(driver_executable_path="C:\\Program Files\\Google\\Chrome\\chromedriver-win64\\chromedriver.exe", options=options)
-        # except (FileNotFoundError, PermissionError) as e: 
-        #     print_lg("(Undetected Mode) Got '{}' when using pre-installed ChromeDriver.".format(type(e).__name__)) 
-            print_lg("Downloading Chrome Driver... This may take some time. Undetected mode requires download every run!")
-            driver = uc.Chrome(options=options)
-    else: driver = webdriver.Chrome(options=options) #, service=Service(executable_path="C:\\Program Files\\Google\\Chrome\\chromedriver-win64\\chromedriver.exe"))
+        print_lg("Downloading Chrome Driver... This may take some time. Undetected mode requires download every run!")
+        import subprocess, re
+        major_version = None
+        try:
+            cmd = "/Applications/Google\\ Chrome.app/Contents/MacOS/Google\\ Chrome --version"
+            out = subprocess.check_output(cmd, shell=True).decode()
+            match = re.search(r'Google Chrome (\d+)', out)
+            if match:
+                major_version = int(match.group(1))
+        except Exception:
+            pass
+
+        try:
+            if major_version:
+                driver = uc.Chrome(options=options, version_main=major_version)
+            else:
+                driver = uc.Chrome(options=options)
+        except Exception as uc_err:
+            print_lg(f"Failed with version_main={major_version}: {uc_err}. Retrying with fresh options...")
+            retry_options = uc.ChromeOptions()
+            if run_in_background: retry_options.add_argument("--headless")
+            if disable_extensions: retry_options.add_argument("--disable-extensions")
+            retry_options.add_argument(f"--user-data-dir={get_default_temp_profile()}")
+            driver = uc.Chrome(options=retry_options)
+    else: 
+        driver = webdriver.Chrome(options=options)
     driver.maximize_window()
     wait = WebDriverWait(driver, 5)
     actions = ActionChains(driver)

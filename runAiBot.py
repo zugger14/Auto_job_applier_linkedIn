@@ -291,13 +291,11 @@ def get_job_main_details(job: WebElement, blacklisted_companies: set, rejected_j
     * skip: A boolean flag to skip this job
     '''
     skip = False
-    job_details_button = job.find_element(By.TAG_NAME, 'a')  # job.find_element(By.CLASS_NAME, "job-card-list__title")  # Problem in India
+    job_details_button = job.find_element(By.TAG_NAME, 'a')
     scroll_to_view(driver, job_details_button, True)
     job_id = job.get_dom_attribute('data-occludable-job-id')
     title = job_details_button.text
     title = title[:title.find("\n")]
-    # company = job.find_element(By.CLASS_NAME, "job-card-container__primary-description").text
-    # work_location = job.find_element(By.CLASS_NAME, "job-card-container__metadata-item").text
     other_details = job.find_element(By.CLASS_NAME, 'artdeco-entity-lockup__subtitle').text
     index = other_details.find(' · ')
     company = other_details[:index]
@@ -681,6 +679,7 @@ def answer_questions(modal: WebElement, questions_list: set, work_location: str,
             label_org = label.text if label else "Unknown"
             label = label_org.lower()
             answer = ""
+            do_actions = False  # A6: explicitly reset — don't inherit from text block above
             prev_answer = text_area.get_attribute("value")
             if not prev_answer or overwrite_previous_answers:
                 if 'summary' in label: answer = linkedin_summary
@@ -808,7 +807,6 @@ def failed_job(job_id: str, job_link: str, resume: str, date_listed, error: str,
             writer = csv.DictWriter(file, fieldnames=fieldnames)
             if file.tell() == 0: writer.writeheader()
             writer.writerow({'Job ID':truncate_for_csv(job_id), 'Job Link':truncate_for_csv(job_link), 'Resume Tried':truncate_for_csv(resume), 'Date listed':truncate_for_csv(date_listed), 'Date Tried':datetime.now(), 'Assumed Reason':truncate_for_csv(error), 'Stack Trace':truncate_for_csv(exception), 'External Job link':truncate_for_csv(application_link), 'Screenshot Name':truncate_for_csv(screenshot_name)})
-            file.close()
     except Exception as e:
         print_lg("Failed to update failed jobs list!", e)
         pyautogui.alert("Failed to update the excel of failed jobs!\nProbably because of 1 of the following reasons:\n1. The file is currently open or in use by another program\n2. Permission denied to write to the file\n3. Failed to find the file", "Failed Logging")
@@ -830,23 +828,36 @@ def screenshot(driver: WebDriver, job_id: str, failedAt: str) -> str:
 
 
 def submitted_jobs(job_id: str, title: str, company: str, work_location: str, work_style: str, description: str, experience_required: int | Literal['Unknown', 'Error in extraction'], 
-                   skills: list[str] | Literal['In Development'], hr_name: str | Literal['Unknown'], hr_link: str | Literal['Unknown'], resume: str, 
+                   skills: list[str] | str, hr_name: str | Literal['Unknown'], hr_link: str | Literal['Unknown'], resume: str, 
                    reposted: bool, date_listed: datetime | Literal['Unknown'], date_applied:  datetime | Literal['Pending'], job_link: str, application_link: str, 
-                   questions_list: set | None, connect_request: Literal['In Development']) -> None:
+                   questions_list: set | None) -> None:
     '''
     Function to create or update the Applied jobs CSV file, once the application is submitted successfully
     '''
     try:
+        # Ensure fieldnames match existing CSV headers and includes Status
+        fieldnames = ['Job ID', 'Title', 'Company', 'Work Location', 'Work Style', 'About Job', 'Experience required', 'Skills required', 'HR Name', 'HR Link', 'Resume', 'Re-posted', 'Date Posted', 'Date Applied', 'Job Link', 'External Job link', 'Questions Found', 'Status']
+        if os.path.exists(file_name) and os.path.getsize(file_name) > 0:
+            try:
+                with open(file_name, mode='r', encoding='utf-8') as f_read:
+                    first_line = next(csv.reader(f_read), None)
+                    if first_line:
+                        fieldnames = first_line
+                        if 'Status' not in fieldnames:
+                            fieldnames.append('Status')
+            except Exception:
+                pass
+
         with open(file_name, mode='a', newline='', encoding='utf-8') as csv_file:
-            fieldnames = ['Job ID', 'Title', 'Company', 'Work Location', 'Work Style', 'About Job', 'Experience required', 'Skills required', 'HR Name', 'HR Link', 'Resume', 'Re-posted', 'Date Posted', 'Date Applied', 'Job Link', 'External Job link', 'Questions Found', 'Connect Request']
-            writer = csv.DictWriter(csv_file, fieldnames=fieldnames)
+            writer = csv.DictWriter(csv_file, fieldnames=fieldnames, extrasaction='ignore')
             if csv_file.tell() == 0: writer.writeheader()
+            initial_status = 'Applied' if application_link == 'Easy Applied' else 'Apply Externally'
             writer.writerow({'Job ID':truncate_for_csv(job_id), 'Title':truncate_for_csv(title), 'Company':truncate_for_csv(company), 'Work Location':truncate_for_csv(work_location), 'Work Style':truncate_for_csv(work_style), 
                             'About Job':truncate_for_csv(description), 'Experience required': truncate_for_csv(experience_required), 'Skills required':truncate_for_csv(skills), 
                                 'HR Name':truncate_for_csv(hr_name), 'HR Link':truncate_for_csv(hr_link), 'Resume':truncate_for_csv(resume), 'Re-posted':truncate_for_csv(reposted), 
                                 'Date Posted':truncate_for_csv(date_listed), 'Date Applied':truncate_for_csv(date_applied), 'Job Link':truncate_for_csv(job_link), 
-                                'External Job link':truncate_for_csv(application_link), 'Questions Found':truncate_for_csv(questions_list), 'Connect Request':truncate_for_csv(connect_request)})
-        csv_file.close()
+                                'External Job link':truncate_for_csv(application_link), 'Questions Found':truncate_for_csv(questions_list),
+                                'Status': initial_status})
     except Exception as e:
         print_lg("Failed to update submitted jobs list!", e)
         pyautogui.alert("Failed to update the excel of applied jobs!\nProbably because of 1 of the following reasons:\n1. The file is currently open or in use by another program\n2. Permission denied to write to the file\n3. Failed to find the file", "Failed Logging")
@@ -913,9 +924,8 @@ def apply_to_jobs(search_terms: list[str]) -> None:
                     date_applied = "Pending"
                     hr_link = "Unknown"
                     hr_name = "Unknown"
-                    connect_request = "In Development" # Still in development
                     date_listed = "Unknown"
-                    skills = "Needs an AI" # Still in development
+                    skills = ""
                     resume = "Pending"
                     reposted = False
                     questions_list = None
@@ -939,25 +949,8 @@ def apply_to_jobs(search_terms: list[str]) -> None:
                         hr_info_card = WebDriverWait(driver,2).until(EC.presence_of_element_located((By.CLASS_NAME, "hirer-card__hirer-information")))
                         hr_link = hr_info_card.find_element(By.TAG_NAME, "a").get_attribute("href")
                         hr_name = hr_info_card.find_element(By.TAG_NAME, "span").text
-                        # if connect_hr:
-                        #     driver.switch_to.new_window('tab')
-                        #     driver.get(hr_link)
-                        #     wait_span_click("More")
-                        #     wait_span_click("Connect")
-                        #     wait_span_click("Add a note")
-                        #     message_box = driver.find_element(By.XPATH, "//textarea")
-                        #     message_box.send_keys(connect_request_message)
-                        #     if close_tabs: driver.close()
-                        #     driver.switch_to.window(linkedIn_tab) 
-                        # def message_hr(hr_info_card):
-                        #     if not hr_info_card: return False
-                        #     hr_info_card.find_element(By.XPATH, ".//span[normalize-space()='Message']").click()
-                        #     message_box = driver.find_element(By.XPATH, "//div[@aria-label='Write a message…']")
-                        #     message_box.send_keys()
-                        #     try_xp(driver, "//button[normalize-space()='Send']")        
                     except Exception as e:
                         print_lg(f'HR info was not given for "{title}" with Job ID: {job_id}!')
-                        # print_lg(e)
 
 
                     # Calculation of date posted
@@ -1114,7 +1107,7 @@ def apply_to_jobs(search_terms: list[str]) -> None:
                             return
                         if skip: continue
 
-                    submitted_jobs(job_id, title, company, work_location, work_style, description, experience_required, skills, hr_name, hr_link, resume, reposted, date_listed, date_applied, job_link, application_link, questions_list, connect_request)
+                    submitted_jobs(job_id, title, company, work_location, work_style, description, experience_required, skills, hr_name, hr_link, resume, reposted, date_listed, date_applied, job_link, application_link, questions_list)
                     if uploaded:   useNewResume = False
 
                     print_lg(f'Successfully saved "{title} | {company}" job. Job ID: {job_id} info')
@@ -1122,6 +1115,11 @@ def apply_to_jobs(search_terms: list[str]) -> None:
                     if application_link == "Easy Applied": easy_applied_count += 1
                     else:   external_jobs_count += 1
                     applied_jobs.add(job_id)
+
+                    # A4: Enforce daily Easy Apply limit
+                    if easy_applied_count >= MAX_APPLY_PER_DAY:
+                        print_lg(f"\n###############  Daily limit of {MAX_APPLY_PER_DAY} Easy Apply applications reached!  ###############\n")
+                        return
 
 
 
@@ -1159,10 +1157,8 @@ def run(total_runs: int) -> int:
     apply_to_jobs(search_terms)
     print_lg("########################################################################################################################\n")
     if not dailyEasyApplyLimitReached:
-        print_lg("Sleeping for 10 min...")
-        sleep(300)
-        print_lg("Few more min... Gonna start with in next 5 min...")
-        sleep(300)
+        print_lg("Sleeping for 10 min before next run...")
+        sleep(600)
     buffer(3)
     return total_runs + 1
 
@@ -1172,7 +1168,6 @@ chatGPT_tab = False
 linkedIn_tab = False
 
 def main() -> None:
-    pyautogui.alert("Please consider sponsoring this project at:\n\nhttps://github.com/sponsors/GodsScion\n\n", "Support the project", "Okay")
     total_runs = 1
     try:
         global linkedIn_tab, tabs_count, useNewResume, aiClient
@@ -1190,17 +1185,6 @@ def main() -> None:
         
         linkedIn_tab = driver.current_window_handle
 
-        # # Login to ChatGPT in a new tab for resume customization
-        # if use_resume_generator:
-        #     try:
-        #         driver.switch_to.new_window('tab')
-        #         driver.get("https://chat.openai.com/")
-        #         if not is_logged_in_GPT(): login_GPT()
-        #         open_resume_chat()
-        #         global chatGPT_tab
-        #         chatGPT_tab = driver.current_window_handle
-        #     except Exception as e:
-        #         print_lg("Opening OpenAI chatGPT tab failed!")
         if use_AI:
             if ai_provider == "openai":
                 aiClient = ai_create_openai_client()
@@ -1211,12 +1195,6 @@ def main() -> None:
             elif ai_provider == "gemini":
                 aiClient = gemini_create_client()
             ##<
-
-            try:
-                about_company_for_ai = " ".join([word for word in (first_name+" "+last_name).split() if len(word) > 3])
-                print_lg(f"Extracted about company info for AI: '{about_company_for_ai}'")
-            except Exception as e:
-                print_lg("Failed to extract about company info!", e)
         
         # Start applying to jobs
         driver.switch_to.window(linkedIn_tab)
@@ -1225,7 +1203,13 @@ def main() -> None:
             if cycle_date_posted:
                 date_options = ["Any time", "Past month", "Past week", "Past 24 hours"]
                 global date_posted
-                date_posted = date_options[date_options.index(date_posted)+1 if date_options.index(date_posted)+1 > len(date_options) else -1] if stop_date_cycle_at_24hr else date_options[0 if date_options.index(date_posted)+1 >= len(date_options) else date_options.index(date_posted)+1]
+                current_idx = date_options.index(date_posted)
+                next_idx = current_idx + 1
+                if stop_date_cycle_at_24hr:
+                    # Advance forward; if we're already at the last option, wrap to start
+                    date_posted = date_options[next_idx] if next_idx < len(date_options) else date_options[0]
+                else:
+                    date_posted = date_options[next_idx % len(date_options)]
             if alternate_sortby:
                 global sort_by
                 sort_by = "Most recent" if sort_by == "Most relevant" else "Most relevant"

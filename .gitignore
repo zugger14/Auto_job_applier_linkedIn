@@ -9,6 +9,27 @@ logs
 old
 
 secrets.py
+config/secrets.py
 config/personals.py
 .venv
 apikeys.py
+
+# Security: OAuth credentials and tokens — NEVER commit these
+credentials.json
+token.json
+
+# Security: Personal CV/resume files — keep out of version control
+*.pdf
+Shirish_Maharjan_CV*
+
+# Virtual environments and symlinks
+venv/
+venv311
+venv311/
+env/
+.env/
+venv_py39_backup/
+
+# OS and runtime artifacts
+.DS_Store
+monitor_counts.json

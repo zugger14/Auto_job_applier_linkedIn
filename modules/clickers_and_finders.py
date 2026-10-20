@@ -1,3 +1,4 @@
+from __future__ import annotations
 '''
 Author:     Sai Vignesh Golla
 LinkedIn:   https://www.linkedin.com/in/saivigneshgolla/
@@ -24,6 +25,13 @@ from selenium.webdriver.remote.webelement import WebElement
 from selenium.webdriver.remote.webdriver import WebDriver
 from selenium.webdriver.common.action_chains import ActionChains
 
+def safe_click(driver: WebDriver, element: WebElement) -> None:
+    '''Attempts normal click, falls back to JS click if intercepted by an overlay.'''
+    try:
+        element.click()
+    except Exception:
+        driver.execute_script("arguments[0].click();", element)
+
 # Click Functions
 def wait_span_click(driver: WebDriver, text: str, time: float=5.0, click: bool=True, scroll: bool=True, scrollTop: bool=False) -> WebElement | bool:
     '''
@@ -39,7 +47,7 @@ def wait_span_click(driver: WebDriver, text: str, time: float=5.0, click: bool=T
             button = WebDriverWait(driver,time).until(EC.presence_of_element_located((By.XPATH, './/span[normalize-space(.)="'+text+'"]')))
             if scroll:  scroll_to_view(driver, button, scrollTop)
             if click:
-                button.click()
+                safe_click(driver, button)
                 buffer(click_gap)
             return button
         except Exception as e:
@@ -59,7 +67,7 @@ def multi_sel(driver: WebDriver, texts: list, time: float=5.0) -> None:
         try:
             button = WebDriverWait(driver,time).until(EC.presence_of_element_located((By.XPATH, './/span[normalize-space(.)="'+text+'"]')))
             scroll_to_view(driver, button)
-            button.click()
+            safe_click(driver, button)
             buffer(click_gap)
         except Exception as e:
             print_lg("Click Failed! Didn't find '"+text+"'")
@@ -75,7 +83,7 @@ def multi_sel_noWait(driver: WebDriver, texts: list, actions: ActionChains = Non
         try:
             button = driver.find_element(By.XPATH, './/span[normalize-space(.)="'+text+'"]')
             scroll_to_view(driver, button)
-            button.click()
+            safe_click(driver, button)
             buffer(click_gap)
         except Exception as e:
             if actions: company_search_click(driver,actions,text)

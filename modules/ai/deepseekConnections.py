@@ -1,3 +1,4 @@
+from __future__ import annotations
 ##> ------ Yang Li : MARKYangL - Feature ------
 from config.secrets import *
 from config.settings import showAiErrorAlerts

@@ -1,3 +1,4 @@
+from __future__ import annotations
 '''
 Author:     Sai Vignesh Golla
 LinkedIn:   https://www.linkedin.com/in/saivigneshgolla/

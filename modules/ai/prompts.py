@@ -1,3 +1,4 @@
+from __future__ import annotations
 """
 Author:     Sai Vignesh Golla
 LinkedIn:   https://www.linkedin.com/in/saivigneshgolla/
@@ -27,14 +28,14 @@ Response schema to represent array of strings `["string1", "string2"]`
 
 # Structure of messages = `[{"role": "user", "content": extract_skills_prompt}]`
 
-extract_skills_prompt = """
+_extract_skills_base = """
 You are a job requirements extractor and classifier. Your task is to extract all skills mentioned in a job description and classify them into five categories:
 1. "tech_stack": Identify all skills related to programming languages, frameworks, libraries, databases, and other technologies used in software development. Examples include Python, React.js, Node.js, Elasticsearch, Algolia, MongoDB, Spring Boot, .NET, etc.
 2. "technical_skills": Capture skills related to technical expertise beyond specific tools, such as architectural design or specialized fields within engineering. Examples include System Architecture, Data Engineering, System Design, Microservices, Distributed Systems, etc.
 3. "other_skills": Include non-technical skills like interpersonal, leadership, and teamwork abilities. Examples include Communication skills, Managerial roles, Cross-team collaboration, etc.
 4. "required_skills": All skills specifically listed as required or expected from an ideal candidate. Include both technical and non-technical skills.
 5. "nice_to_have": Any skills or qualifications listed as preferred or beneficial for the role but not mandatory.
-Return the output in the following JSON format with no additional commentary:
+{strict_note}
 {{
     "tech_stack": [],
     "technical_skills": [],
@@ -46,35 +47,39 @@ Return the output in the following JSON format with no additional commentary:
 JOB DESCRIPTION:
 {}
 """
+
+def get_extract_skills_prompt(job_description: str, strict_json: bool = False) -> str:
+    """
+    Returns the skill extraction prompt for a given job description.
+    - `strict_json=True`: uses stricter instructions for models like DeepSeek that
+      tend to add extra commentary outside the JSON block.
+    """
+    if strict_json:
+        strict_note = (
+            "\nIMPORTANT: You must ONLY return a valid JSON object in the exact format shown below "
+            "- no additional text, explanations, or commentary.\n"
+            "Each category should contain an array of strings, even if empty.\n\n"
+        )
+    else:
+        strict_note = "Return the output in the following JSON format with no additional commentary:\n"
+    return _extract_skills_base.format(job_description, strict_note=strict_note)
+
+# Legacy aliases kept for backward compatibility — prefer get_extract_skills_prompt()
+extract_skills_prompt = _extract_skills_base.format("{}", strict_note="Return the output in the following JSON format with no additional commentary:\n")
 """
-Use `extract_skills_prompt.format(job_description)` to insert `job_description`.
+Use `get_extract_skills_prompt(job_description)` to build the prompt.
 """
 
-# DeepSeek-specific optimized prompt, emphasis on returning only JSON without using json_schema
-deepseek_extract_skills_prompt = """
-You are a job requirements extractor and classifier. Your task is to extract all skills mentioned in a job description and classify them into five categories:
-1. "tech_stack": Identify all skills related to programming languages, frameworks, libraries, databases, and other technologies used in software development. Examples include Python, React.js, Node.js, Elasticsearch, Algolia, MongoDB, Spring Boot, .NET, etc.
-2. "technical_skills": Capture skills related to technical expertise beyond specific tools, such as architectural design or specialized fields within engineering. Examples include System Architecture, Data Engineering, System Design, Microservices, Distributed Systems, etc.
-3. "other_skills": Include non-technical skills like interpersonal, leadership, and teamwork abilities. Examples include Communication skills, Managerial roles, Cross-team collaboration, etc.
-4. "required_skills": All skills specifically listed as required or expected from an ideal candidate. Include both technical and non-technical skills.
-5. "nice_to_have": Any skills or qualifications listed as preferred or beneficial for the role but not mandatory.
-
-IMPORTANT: You must ONLY return valid JSON object in the exact format shown below - no additional text, explanations, or commentary.
-Each category should contain an array of strings, even if empty.
-
-{{
-    "tech_stack": ["Example Skill 1", "Example Skill 2"],
-    "technical_skills": ["Example Skill 1", "Example Skill 2"],
-    "other_skills": ["Example Skill 1", "Example Skill 2"],
-    "required_skills": ["Example Skill 1", "Example Skill 2"],
-    "nice_to_have": ["Example Skill 1", "Example Skill 2"]
-}}
-
-JOB DESCRIPTION:
-{}
+deepseek_extract_skills_prompt = _extract_skills_base.format(
+    "{}",
+    strict_note=(
+        "\nIMPORTANT: You must ONLY return a valid JSON object in the exact format shown below "
+        "- no additional text, explanations, or commentary.\n"
+        "Each category should contain an array of strings, even if empty.\n\n"
+    )
+)
 """
-"""
-DeepSeek optimized version, use `deepseek_extract_skills_prompt.format(job_description)` to insert `job_description`.
+DeepSeek optimized version — use `get_extract_skills_prompt(job_description, strict_json=True)`.
 """
 
 
