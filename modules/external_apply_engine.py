@@ -98,17 +98,18 @@ class ExternalApplyEngine:
                 "images": [b64],
                 "stream": False,
                 "options": {
-                    "num_predict": 100,
+                    "num_predict": 350,
                     "temperature": 0.1
                 }
             }
             resp = requests.post("http://localhost:11434/api/generate", json=payload, timeout=120)
             if resp.status_code == 200:
                 data = resp.json()
-                text = (data.get("response") or "").strip()
-                if not text:
-                    text = (data.get("thinking") or "").strip()
-                return text
+                resp_text = (data.get("response") or "").strip()
+                think_text = (data.get("thinking") or "").strip()
+                if resp_text and think_text:
+                    return f"{resp_text}\n{think_text}"
+                return resp_text or think_text
         except Exception as e:
             print(f"⚠️ Vision reasoning ({self.vision_model}) notice: {e}", flush=True)
         return ""
@@ -256,14 +257,14 @@ class ExternalApplyEngine:
                             "Or does it show validation errors (missing required field, red error notice, invalid input)? "
                             "Start your answer with CONFIRMED if successful, or ERRORS if failed, followed by 1 concise sentence."
                         )
-                        print(f"👁️ [Vision LLM ({self.vision_model})] Decision: {v_verify}", flush=True)
-                        if "CONFIRMED" in v_verify.upper():
+                        print(f"👁️ [Vision LLM ({self.vision_model})] Decision: {v_verify[:180]}...", flush=True)
+                        if "CONFIRMED" in v_verify.upper() or "APPLICATION SUBMITTED" in v_verify.upper():
                             submit_res["success"] = True
-                            submit_res["message"] = f"Confirmed via Vision LLM ({self.vision_model}): {v_verify}"
+                            submit_res["message"] = f"Confirmed via Vision LLM ({self.vision_model}): {v_verify[:120]}"
                             submit_res["confirmation_type"] = "vision_llm"
-                        elif "ERRORS" in v_verify.upper() or "ERROR" in v_verify.upper():
+                        elif any(err in v_verify.upper() for err in ["VALIDATION ERROR", "FIELD IS REQUIRED", "PLEASE CORRECT", "MISSING REQUIRED"]):
                             submit_res["success"] = False
-                            submit_res["message"] = f"Vision LLM detected validation error: {v_verify}"
+                            submit_res["message"] = f"Vision LLM detected validation error: {v_verify[:120]}"
                     elif submit_res.get("expired"):
                         print(f"ℹ️ Position closed or portal directory without submit form. Skipping post-submission verification.", flush=True)
                 except Exception as e:
@@ -394,10 +395,11 @@ class ExternalApplyEngine:
 
     def _navigate_to_application_form(self, page, context, company_name: str) -> tuple:
         """
-        Reads page content using DOM and Vision LLM.
-        Decides whether to solve a CAPTCHA, click an 'Apply' / 'Apply on company website'
-        button to reveal the form (tracking new tabs/pages), or confirm that the form is ready.
-        Returns: (active_page, early_result_dict_or_None)
+        Uses the local Vision LLM model as the primary decision maker on every page load:
+        - Decides if there is NO_JOB (closed, expired, 404, blocked) -> marks expired immediately.
+        - Decides if there is a CAPTCHA -> solves challenge.
+        - Decides if a CLICK is needed to open the application form (e.g. Apply, Apply Now, Apply on company site) -> clicks button & tracks new tabs.
+        - Decides if FORM_READY -> proceeds directly to filling form.
         """
         # 1. Dismiss cookies
         self._dismiss_cookie_banners(page)
@@ -405,90 +407,103 @@ class ExternalApplyEngine:
         # 2. Check and handle CAPTCHA / Cloudflare
         self._handle_captchas_and_challenges(page)
 
-        # 3. Check if form is already present on current page
-        has_form = page.locator('input[type="file"], #first_name, #resume, form[action*="apply" i]').count() > 0
-        if has_form:
-            return page, None
-
-        # 4. Use Vision LLM to inspect the page state
+        # 3. Always take a screenshot and invoke the Vision LLM to decide page state
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
         safe_slug = re.sub(r'[^a-zA-Z0-9]', '_', company_name or "external_job")[:25]
         landing_screen = os.path.join(self.log_dir, f"{ts}_{safe_slug}_landing.png")
         try:
             page.screenshot(path=landing_screen)
-            print(f"👁️ [Vision LLM ({self.vision_model})] Reading landing page to decide action (Captcha, Apply button, or Form)...", flush=True)
-            v_decision = self._analyze_screenshot(
+            print(f"👁️ [Vision LLM ({self.vision_model})] Evaluating page state: deciding whether to click, if no jobs exist, or if form is ready...", flush=True)
+            v_analysis = self._analyze_screenshot(
                 landing_screen,
                 "Analyze this webpage screenshot carefully.\n"
-                "What is the status of this page?\n"
-                "- CAPTCHA: A captcha, 'verify you are human' challenge, or Cloudflare blocker is visible.\n"
-                "- APPLY_BUTTON: This is a job description or directory where the user needs to click 'Apply', 'Apply Now', 'Apply on company website', or 'Start Application' to open the form.\n"
-                "- FORM: The application form fields (name, email, resume, etc.) are already open on screen.\n"
-                "- CLOSED: This position is closed, expired, filled, or shows a 404/not found error.\n"
-                "State one keyword: CAPTCHA, APPLY_BUTTON, FORM, or CLOSED, followed by 1 concise sentence."
+                "Determine the status of this job application page:\n"
+                "- NO_JOB: If the job posting is closed, expired, filled, inactive, 404 error, blocked, or this is a general search page with no specific job opening.\n"
+                "- CAPTCHA: If a human verification / Cloudflare challenge is blocking.\n"
+                "- CLICK_APPLY: If this is a job description or portal where the user must click an 'Apply' / 'Apply Now' / 'Apply on company website' / 'Start Application' button to open the form.\n"
+                "- FORM_READY: If an active job application form (asking for name, email, resume, etc.) is already open.\n\n"
+                "State one keyword: NO_JOB, CAPTCHA, CLICK_APPLY, or FORM_READY, followed by 1 concise sentence."
             )
-            print(f"👁️ [Vision LLM ({self.vision_model})] Decision: {v_decision}", flush=True)
+            print(f"👁️ [Vision LLM ({self.vision_model})] Page Decision: {v_analysis[:180]}...", flush=True)
+            v_upper = v_analysis.upper()
 
-            if "CLOSED" in v_decision.upper():
-                return page, {"success": False, "expired": True, "message": f"Vision LLM: {v_decision}"}
+            # Decision 1: NO JOB (expired, closed, 404, blocked)
+            if any(no_job_kw in v_upper for no_job_kw in [
+                "NO_JOB", "CLOSED", "EXPIRED", "NOT FOUND",
+                "NO LONGER AVAILABLE", "POSITION HAS BEEN FILLED", "JOB NOT FOUND", "UNABLE TO ACCESS", "YOU HAVE BEEN BLOCKED"
+            ]) and not any(ok_kw in v_upper for ok_kw in ["FORM_READY", "INPUT FIELDS", "SUBMIT APPLICATION"]):
+                print(f"🚫 [Vision LLM ({self.vision_model})] Confirmed NO ACTIVE JOB on page (closed/expired/404).", flush=True)
+                return page, {"success": False, "expired": True, "message": f"Vision LLM: No active job ({v_analysis[:100]})"}
 
-            if "CAPTCHA" in v_decision.upper():
+            # Decision 2: CAPTCHA
+            if "DECISION: CAPTCHA" in v_upper or ("CAPTCHA" in v_upper and any(k in v_upper for k in ["CLOUDFLARE", "VERIFY YOU ARE HUMAN", "TURNSTILE"])):
+                print(f"🛡️ [Vision LLM ({self.vision_model})] Identified CAPTCHA challenge on page.", flush=True)
                 self._handle_captchas_and_challenges(page)
+
+            # Decision 3: FORM_READY
+            has_form = page.locator('input[type="file"], #first_name, #resume, form[action*="apply" i]').count() > 0
+            if "FORM_READY" in v_upper and has_form:
+                print(f"📝 [Vision LLM ({self.vision_model})] Application form is already active and ready to fill.", flush=True)
+                return page, None
+
         except Exception as e:
             print(f"⚠️ Vision landing check notice: {e}", flush=True)
 
-        # 5. Search for and click initial Apply button if on description page
-        apply_selectors = [
-            'button:has-text("Apply on company website")', 'a:has-text("Apply on company website")',
-            'button:has-text("Apply on company site")', 'a:has-text("Apply on company site")',
-            'button:has-text("Apply for this job")', 'a:has-text("Apply for this job")',
-            'button:has-text("Apply to Job")', 'a:has-text("Apply to Job")',
-            'button:has-text("Apply now")', 'a:has-text("Apply now")',
-            'button:has-text("Apply Now")', 'a:has-text("Apply Now")',
-            'button:has-text("Start Application")', 'a:has-text("Start Application")',
-            'button:has-text("Apply with Resume")', 'a:has-text("Apply with Resume")',
-            'button:has-text("Apply without Resume")', 'a:has-text("Apply without Resume")',
-            'button:has-text("Apply")', 'a:has-text("Apply")',
-            '[data-qa="apply-button"]', '#apply_button', '.apply-button',
-            'a[href*="/apply"]', 'a[href*="apply"]'
-        ]
+        # Decision 4: CLICK_APPLY (Search for and click Apply button if on description page)
+        has_form = page.locator('input[type="file"], #first_name, #resume, form[action*="apply" i]').count() > 0
+        if not has_form:
+            print(f"👉 [Vision LLM ({self.vision_model})] Decided to click Apply button on job description page.", flush=True)
+            apply_selectors = [
+                'button:has-text("Apply on company website")', 'a:has-text("Apply on company website")',
+                'button:has-text("Apply on company site")', 'a:has-text("Apply on company site")',
+                'button:has-text("Apply for this job")', 'a:has-text("Apply for this job")',
+                'button:has-text("Apply to Job")', 'a:has-text("Apply to Job")',
+                'button:has-text("Apply now")', 'a:has-text("Apply now")',
+                'button:has-text("Apply Now")', 'a:has-text("Apply Now")',
+                'button:has-text("Start Application")', 'a:has-text("Start Application")',
+                'button:has-text("Apply with Resume")', 'a:has-text("Apply with Resume")',
+                'button:has-text("Apply without Resume")', 'a:has-text("Apply without Resume")',
+                'button:has-text("Apply")', 'a:has-text("Apply")',
+                '[data-qa="apply-button"]', '#apply_button', '.apply-button',
+                'a[href*="/apply"]', 'a[href*="apply"]'
+            ]
 
-        initial_page_count = len(context.pages)
-        clicked_apply = False
+            initial_page_count = len(context.pages)
+            clicked_apply = False
 
-        for sel in apply_selectors:
-            try:
-                candidates = page.locator(sel).all()
-                for btn in candidates:
-                    if not btn.is_visible():
-                        continue
-                    btn_text = (btn.inner_text() or btn.get_attribute("value") or "").strip().lower()
-                    if any(bad in btn_text for bad in ["cookie", "cancel", "close", "sign in", "log in"]):
-                        continue
-                    print(f"👉 Found and clicking Apply button: '{btn.inner_text().strip()}'", flush=True)
-                    btn.click(force=True)
-                    clicked_apply = True
-                    break
-                if clicked_apply:
-                    break
-            except Exception:
-                continue
-
-        if clicked_apply:
-            time.sleep(2)
-            # Check if a new tab opened (target="_blank" to external ATS)
-            if len(context.pages) > initial_page_count:
-                new_page = context.pages[-1]
+            for sel in apply_selectors:
                 try:
-                    new_page.wait_for_load_state("domcontentloaded", timeout=15000)
+                    candidates = page.locator(sel).all()
+                    for btn in candidates:
+                        if not btn.is_visible():
+                            continue
+                        btn_text = (btn.inner_text() or btn.get_attribute("value") or "").strip().lower()
+                        if any(bad in btn_text for bad in ["cookie", "cancel", "close", "sign in", "log in"]):
+                            continue
+                        print(f"👉 Found and clicking Apply button: '{btn.inner_text().strip()}'", flush=True)
+                        btn.click(force=True)
+                        clicked_apply = True
+                        break
+                    if clicked_apply:
+                        break
                 except Exception:
-                    pass
-                print(f"🔀 Switched to newly opened application tab: {new_page.url}", flush=True)
-                page = new_page
-                self._dismiss_cookie_banners(page)
-                self._handle_captchas_and_challenges(page)
+                    continue
 
-            self._wait_for_form_hydration(page)
+            if clicked_apply:
+                time.sleep(2)
+                # Check if a new tab opened (target="_blank" to external ATS)
+                if len(context.pages) > initial_page_count:
+                    new_page = context.pages[-1]
+                    try:
+                        new_page.wait_for_load_state("domcontentloaded", timeout=15000)
+                    except Exception:
+                        pass
+                    print(f"🔀 Switched to newly opened application tab: {new_page.url}", flush=True)
+                    page = new_page
+                    self._dismiss_cookie_banners(page)
+                    self._handle_captchas_and_challenges(page)
+
+                self._wait_for_form_hydration(page)
 
         return page, None
 
