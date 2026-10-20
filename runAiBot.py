@@ -48,7 +48,6 @@ from modules.validator import validate_config
 
 if use_AI:
     from modules.ai.openaiConnections import ai_create_openai_client, ai_extract_skills, ai_answer_question, ai_close_openai_client
-    from modules.ai.deepseekConnections import deepseek_create_client, deepseek_extract_skills, deepseek_answer_question
     from modules.ai.geminiConnections import gemini_create_client, gemini_extract_skills, gemini_answer_question
 
 from typing import Literal
@@ -643,8 +642,6 @@ def answer_questions(modal: WebElement, questions_list: set, work_location: str,
                         try:
                             if ai_provider.lower() == "openai":
                                 answer = ai_answer_question(aiClient, label_org, question_type="text", job_description=job_description, user_information_all=user_information_all)
-                            elif ai_provider.lower() == "deepseek":
-                                answer = deepseek_answer_question(aiClient, label_org, options=None, question_type="text", job_description=job_description, about_company=None, user_information_all=user_information_all)
                             elif ai_provider.lower() == "gemini":
                                 answer = gemini_answer_question(aiClient, label_org, options=None, question_type="text", job_description=job_description, about_company=None, user_information_all=user_information_all)
                             else:
@@ -690,8 +687,6 @@ def answer_questions(modal: WebElement, questions_list: set, work_location: str,
                         try:
                             if ai_provider.lower() == "openai":
                                 answer = ai_answer_question(aiClient, label_org, question_type="textarea", job_description=job_description, user_information_all=user_information_all)
-                            elif ai_provider.lower() == "deepseek":
-                                answer = deepseek_answer_question(aiClient, label_org, options=None, question_type="textarea", job_description=job_description, about_company=None, user_information_all=user_information_all)
                             elif ai_provider.lower() == "gemini":
                                 answer = gemini_answer_question(aiClient, label_org, options=None, question_type="textarea", job_description=job_description, about_company=None, user_information_all=user_information_all)
                             else:
@@ -981,8 +976,6 @@ def apply_to_jobs(search_terms: list[str]) -> None:
                         try:
                             if ai_provider.lower() == "openai":
                                 skills = ai_extract_skills(aiClient, description)
-                            elif ai_provider.lower() == "deepseek":
-                                skills = deepseek_extract_skills(aiClient, description)
                             elif ai_provider.lower() == "gemini":
                                 skills = gemini_extract_skills(aiClient, description)
                             else:
@@ -1188,10 +1181,6 @@ def main() -> None:
         if use_AI:
             if ai_provider == "openai":
                 aiClient = ai_create_openai_client()
-            ##> ------ Yang Li : MARKYangL - Feature ------
-            # Create DeepSeek client
-            elif ai_provider == "deepseek":
-                aiClient = deepseek_create_client()
             elif ai_provider == "gemini":
                 aiClient = gemini_create_client()
             ##<
@@ -1267,8 +1256,6 @@ def main() -> None:
         if use_AI and aiClient:
             try:
                 if ai_provider.lower() == "openai":
-                    ai_close_openai_client(aiClient)
-                elif ai_provider.lower() == "deepseek":
                     ai_close_openai_client(aiClient)
                 elif ai_provider.lower() == "gemini":
                     pass # Gemini client does not need to be closed
