@@ -152,8 +152,42 @@ cp config/personals.example.py config/personals.py
 6. **Add Your Resume File**:
    - Place your resume PDF in the repository root directory matching the name configured in `default_resume_path` (e.g., `resume.pdf`).
 
-7. **`credentials.json` (Optional - for Gmail Sync)**:
-   - If using the Gmail tracker, place your Google Cloud OAuth2 client credentials JSON as `credentials.json` in the root folder.
+7. **`credentials.json` (Setting Up Gmail Application Tracker)**:
+   The automated Gmail tracker uses Google's official Gmail API (`gmail.readonly`) to inspect incoming job responses. Follow these simple steps to generate your `credentials.json`:
+
+   #### 🔑 Step-by-Step Guide to Get `credentials.json`:
+   1. **Open Google Cloud Console**: Go to [console.cloud.google.com](https://console.cloud.google.com/) and log in with your Gmail account.
+   2. **Create a New Project**:
+      - Click the project dropdown at the top-left > **New Project**.
+      - Give it a name (e.g., `Job-Applier-Tracker`) and click **Create**.
+   3. **Enable the Gmail API**:
+      - In the left sidebar, navigate to **APIs & Services > Library**.
+      - In the search bar, type **Gmail API** and click on it.
+      - Click the blue **Enable** button.
+   4. **Configure the OAuth Consent Screen**:
+      - In the left sidebar, click **APIs & Services > OAuth consent screen**.
+      - Select **External** and click **Create**.
+      - Fill in **App Name** (e.g., `Auto Job Applier`) and enter your email under **User support email** and **Developer contact information**.
+      - Click **Save and Continue** on the Scopes screen (no custom scopes needed here).
+      - On the **Test users** screen, click **+ Add Users**, enter your Gmail address, and click **Save and Continue**.
+   5. **Create OAuth Desktop Client Credentials**:
+      - Navigate to **APIs & Services > Credentials**.
+      - Click **+ Create Credentials** at the top > select **OAuth client ID**.
+      - Set **Application type** to **Desktop app**.
+      - Set **Name** to `Desktop Client` and click **Create**.
+   6. **Download and Place the File**:
+      - A modal will appear confirming creation. Click **Download JSON** (or click the download icon next to your client ID in the credentials table).
+      - Rename the downloaded file to exactly `credentials.json`.
+      - Move `credentials.json` directly into the root folder of this repository:
+        ```bash
+        # Place credentials.json in the repository root:
+        mv ~/Downloads/client_secret_*.json ./credentials.json
+        ```
+
+   #### 🚀 First-Time Sign-In:
+   - When you click **Scan Gmail with AI** on the Web Dashboard (or run `python modules/gmail_tracker.py`), a Google login window will automatically pop up in your browser.
+   - Choose your account and grant read permissions.
+   - A `token.json` file will automatically be created in your directory so you stay authenticated without needing to log in again.
 
 ---
 
