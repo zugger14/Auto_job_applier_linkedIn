@@ -12,7 +12,7 @@ warnings.filterwarnings('ignore', message='resource_tracker: There appear to.*',
 from datetime import datetime
 import config.questions as cq
 import config.secrets as cs
-from modules.crewai_agent import run_browser_use_apply
+from modules.external_apply_engine import run_external_apply
 
 COUNTER_FILE = os.path.join(os.path.abspath(os.path.dirname(__file__)), "monitor_counts.json")
 
@@ -117,13 +117,13 @@ def run_batch_apply():
         if counters.get('external', 0) >= 20:
             print("⚡ Daily limit of 20 external jobs reached. Stopping further applications.")
             break
-        print(f"\n[{count+1}/{len(external_jobs)}] Starting AI Agent for: {link}")
+        print(f"\n[{count+1}/{len(external_jobs)}] Starting External Apply Engine for: {link}")
         comp = rows[row_idx].get('Company Name', '')
         title = rows[row_idx].get('Job Title', '')
         attempt_success = False
         for attempt in range(1, MAX_RETRIES + 1):
             try:
-                result = run_browser_use_apply(link, cq.user_information_all, company_name=comp, job_title=title)
+                result = run_external_apply(link, cv_data=cq.user_information_all, company_name=comp, job_title=title)
                 if isinstance(result, bool):
                     result = {"success": result, "message": "Form submitted" if result else "Failed"}
 

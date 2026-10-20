@@ -32,8 +32,9 @@
 |------|---------|
 | `runAiBot.py` | Main bot entrypoint — Selenium-based LinkedIn scraper and Easy Apply automator |
 | `app.py` | Flask web dashboard for viewing applied jobs history |
-| `apply_external_jobs.py` | Batch processor for external (non-Easy Apply) job links using Browser-Use AI Agent |
-| `modules/crewai_agent.py` | Browser-Use + Ollama AI agent for external form filling |
+| `apply_external_jobs.py` | Batch processor for external (non-Easy Apply) job links |
+| `modules/external_apply_engine.py` | Intelligent Playwright engine for external form filling |
+| `modules/crewai_agent.py` | Compatibility alias to `modules/external_apply_engine.py` |
 | `modules/gmail_tracker.py` | Gmail OAuth2 integration — AI-powered email parser for application status updates |
 | `modules/ai/` | Multi-provider AI connections (OpenAI, DeepSeek, Gemini) |
 | `modules/helpers.py` | Shared utilities, logging helpers |
@@ -121,10 +122,11 @@
 |----------|--------|
 | OpenAI (GPT models) | `modules/ai/openaiConnections.py` |
 | OpenAI-compatible (Ollama, LM Studio, Jan) | Same, via `llm_api_url` |
-| DeepSeek | `modules/ai/deepseekConnections.py` |
 | Google Gemini | `modules/ai/geminiConnections.py` |
 
-**Current local config**: `deepseek-r1:14b` via Ollama at `http://localhost:11434/v1/`
+**Current local config**:
+- Main Bot Easy Apply Answering: `qwen2.5:7b` via local Ollama at `http://localhost:11434/v1/`
+- Gmail Status Tracking: `qwen3:1.7b` via local Ollama at `http://localhost:11434/v1/`
 
 ### AI Capabilities
 
@@ -139,10 +141,10 @@
 
 ## 🌐 External Job Applications
 
-### `apply_external_jobs.py` + `modules/crewai_agent.py`
+### `apply_external_jobs.py` + `modules/external_apply_engine.py`
 
 - **Batch processing**: Reads all "Apply Externally" links from the CSV history file
-- **AI Browser Agent**: Uses `browser-use` library + Ollama to autonomously navigate external ATS portals
+- **Intelligent Playwright Engine**: Autonomously parses external ATS portals (Greenhouse, Ashby, Lever, Teamtailor, etc.)
 - **Form filling**: Passes full CV/resume text to the AI agent to fill every form field
 - **URL reachability check**: Skips dead/unreachable URLs before attempting
 - **Retry mechanism**: Up to 3 attempts per external job with exponential backoff (2^n seconds)

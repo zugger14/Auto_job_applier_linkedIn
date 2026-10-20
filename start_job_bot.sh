@@ -25,7 +25,7 @@ else
     echo "Please run the setup commands first:"
     echo "/opt/homebrew/bin/python3.11 -m venv venv"
     echo "source venv/bin/activate"
-    echo "pip install undetected-chromedriver pyautogui setuptools openai flask-cors flask bs4 google-generativeai google-api-python-client google-auth-httplib2 google-auth-oauthlib crewai browser-use langchain-openai playwright"
+    echo "pip install undetected-chromedriver pyautogui setuptools openai flask-cors flask bs4 google-generativeai google-api-python-client google-auth-httplib2 google-auth-oauthlib playwright"
     exit 1
 fi
 
