@@ -17,11 +17,9 @@ if [ -f logs/log.txt ]; then
   tail -n 5000 logs/log.txt > logs/log.tmp && mv logs/log.tmp logs/log.txt
 fi
 
-# Check if virtual environment exists (unified Python 3.11)
+# Check if virtual environment exists
 if [ -d "venv" ]; then
     source venv/bin/activate
-elif [ -d "venv311" ]; then
-    source venv311/bin/activate
 else
     echo "❌ Error: Virtual environment not found."
     echo "Please run the setup commands first:"

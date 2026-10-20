@@ -3,7 +3,7 @@
 # ---------------------------------------------------------------
 # Dashboard starter – runs the Flask UI without triggering any job bots
 # ---------------------------------------------------------------
-# Use the project's Python virtual environment (venv311).
+# Use the project's Python virtual environment (venv).
 # ---------------------------------------------------------------
 
 # Kill any existing dashboard process on port 5001
@@ -12,11 +12,9 @@ if lsof -ti :5001 >/dev/null 2>&1; then
   lsof -ti :5001 | xargs kill -9 2>/dev/null
 fi
 
-# Activate the correct virtual environment (unified Python 3.11)
+# Activate the virtual environment
 if [ -d "venv" ]; then
   source venv/bin/activate
-elif [ -d "venv311" ]; then
-  source venv311/bin/activate
 else
   echo "❌ Virtual environment not found. Please create 'venv' first."
   exit 1

@@ -1,10 +1,8 @@
 #!/bin/bash
 
-# Activate the virtual environment (unified Python 3.11)
+# Activate the virtual environment
 if [ -d "venv" ]; then
   source venv/bin/activate
-elif [ -d "venv311" ]; then
-  source venv311/bin/activate
 fi
 export RESUME_PATH="$(pwd)/Shirish_Maharjan_CV copy.pdf"
 

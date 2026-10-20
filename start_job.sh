@@ -10,11 +10,9 @@
 # Ensure we are in the project directory
 cd "$(dirname "${BASH_SOURCE[0]}")" || exit 1
 
-# Activate the virtual environment (unified Python 3.11)
+# Activate the virtual environment
 if [ -d "venv" ]; then
     source venv/bin/activate
-elif [ -d "venv311" ]; then
-    source venv311/bin/activate
 else
     echo "❌ Virtual environment not found. Please run setup first."
     exit 1
