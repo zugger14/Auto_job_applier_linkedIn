@@ -869,49 +869,159 @@ class ExternalApplyEngine:
                 continue
         return None
 
+    def _find_progression_button(self, target):
+        """
+        Detects any intermediate progression button that advances a multi-step application form.
+        Covers Next, Continue, Proceed, Review, Save & Next, Forward, Step, and dynamic attribute patterns.
+        """
+        progression_selectors = [
+            # Standard explicit words
+            'button:has-text("Next")', 'a:has-text("Next")',
+            'button:has-text("Continue")', 'a:has-text("Continue")',
+            'button:has-text("Proceed")', 'a:has-text("Proceed")',
+            'button:has-text("Review and submit")', 'button:has-text("Review & submit")',
+            'button:has-text("Review application")', 'button:has-text("Review Application")',
+            'button:has-text("Review and continue")', 'button:has-text("Review & continue")',
+            'button:has-text("Review")', 'a:has-text("Review")',
+            'button:has-text("Save & continue")', 'button:has-text("Save and continue")',
+            'button:has-text("Save & next")', 'button:has-text("Save and next")',
+            'button:has-text("Save and Proceed")', 'button:has-text("Save & proceed")',
+            'button:has-text("Next step")', 'a:has-text("Next step")',
+            'button:has-text("Next Step")', 'a:has-text("Next Step")',
+            'button:has-text("Next page")', 'button:has-text("Next Page")',
+            'button:has-text("Go to next step")', 'button:has-text("Proceed to next step")',
+            'button:has-text("Move forward")', 'button:has-text("Advance")',
+            'button:has-text("Step 2")', 'button:has-text("Step 3")', 'button:has-text("Step 4")',
+            'button:has-text("Agree & continue")', 'button:has-text("Accept & continue")',
+            'button:has-text("Agree and continue")', 'button:has-text("Accept and continue")',
+            'button:has-text("Next: ")', 'button:has-text("Next :")',
+            
+            # Form button/input values
+            'input[type="button"][value*="Next" i]', 'input[type="submit"][value*="Next" i]',
+            'input[type="button"][value*="Continue" i]', 'input[type="submit"][value*="Continue" i]',
+            'input[type="button"][value*="Proceed" i]', 'input[type="submit"][value*="Proceed" i]',
+            'input[type="button"][value*="Review" i]', 'input[type="submit"][value*="Review" i]',
+            'input[type="button"][value*="Save" i]',
+            
+            # ARIA labels & data attributes
+            '[aria-label*="next" i]', '[aria-label*="continue" i]', '[aria-label*="proceed" i]',
+            '[aria-label*="forward" i]', '[aria-label*="review" i]',
+            '[data-qa*="next" i]', '[data-qa*="continue" i]',
+            '[data-testid*="next" i]', '[data-testid*="continue" i]',
+            '[data-action*="next" i]', '[data-action*="continue" i]',
+            '.btn-next', '.button-next', '.wizard-next', '.step-next',
+            '#btn-next', '#button-next', '#next-button', '#next-step'
+        ]
+
+        for sel in progression_selectors:
+            try:
+                candidates = target.locator(sel).all()
+                for cand in candidates:
+                    if not cand.is_visible():
+                        continue
+                    txt = (cand.inner_text() or cand.get_attribute("value") or cand.get_attribute("aria-label") or "").strip().lower()
+                    if any(bad in txt for bad in ["cookie", "cancel", "close", "sign in", "log in", "back", "previous", "delete"]):
+                        continue
+                    # Ensure it is not a final submit button
+                    if any(s in txt for s in ["submit", "send application"]):
+                        continue
+                    return cand
+            except Exception:
+                continue
+
+        # Dynamic DOM scan for any clickable element with progression keywords
+        try:
+            cand_info = target.evaluate('''() => {
+                const elements = Array.from(document.querySelectorAll('button, a, input[type="button"], input[type="submit"], div[role="button"], span[role="button"]'));
+                const keywords = ["next", "continue", "proceed", "review", "forward", "advance", "step", "save &", "save and"];
+                const excludes = ["cookie", "cancel", "close", "sign in", "log in", "back", "previous", "delete", "clear", "submit"];
+                for (let i = 0; i < elements.length; i++) {
+                    const el = elements[i];
+                    if (!el || el.offsetParent === null) continue;
+                    const text = (el.innerText || el.value || el.getAttribute('aria-label') || '').trim().toLowerCase();
+                    if (!text || text.length > 40) continue;
+                    if (excludes.some(ex => text.includes(ex))) continue;
+                    if (keywords.some(kw => text.includes(kw))) {
+                        return { text: text, index: i };
+                    }
+                }
+                return null;
+            }''')
+            if cand_info and cand_info.get("text"):
+                found_text = cand_info["text"]
+                loc = target.locator(f'button:has-text("{found_text}"), a:has-text("{found_text}"), [role="button"]:has-text("{found_text}")').first
+                if loc.is_visible(timeout=500):
+                    return loc
+        except Exception:
+            pass
+
+        return None
+
+    def _vision_detect_progression_button(self, page) -> str:
+        """Uses the local Vision LLM to locate any progression button on screen if DOM heuristics missed it."""
+        try:
+            ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+            screen_path = os.path.join(self.log_dir, f"{ts}_multistep_check.png")
+            page.screenshot(path=screen_path)
+            prompt = (
+                "Look at this job application form screenshot.\n"
+                "Is there an active button to advance to the next step or review (e.g. Next, Continue, Proceed, Review, Save & Next, Forward, Step 2)?\n"
+                "If YES, return ONLY the exact button text (e.g. 'Continue', 'Save & Proceed', 'Next').\n"
+                "If NO or if this is the final Submit button, reply NONE."
+            )
+            resp = self._analyze_screenshot(screen_path, prompt)
+            cleaned = resp.strip().strip("'\"").strip()
+            if cleaned and "NONE" not in cleaned.upper() and len(cleaned) < 30:
+                print(f"👁️ [Vision LLM ({self.vision_model})] Detected progression button text: '{cleaned}'", flush=True)
+                return cleaned
+        except Exception as e:
+            print(f"⚠️ Vision progression check notice: {e}", flush=True)
+        return ""
+
     def _submit_and_verify(self, target, page, company_name: str, job_title: str) -> dict:
         submit_btn = self._find_submit_button(target)
 
-        # If not found, check if this is a multi-step form with Next / Continue buttons
-        if not submit_btn:
-            next_selectors = [
-                'button:has-text("Next")',
-                'button:has-text("Continue")',
-                'button:has-text("Next step")',
-                'button:has-text("Review application")',
-                'button:has-text("Save & continue")',
-                'button:has-text("Save and continue")',
-                'a:has-text("Next")',
-                'a:has-text("Continue")'
-            ]
-            next_btn = None
-            for n_sel in next_selectors:
-                try:
-                    candidates = target.locator(n_sel).all()
-                    for cand in candidates:
-                        if not cand.is_visible():
-                            continue
-                        txt = (cand.inner_text() or cand.get_attribute("value") or "").strip().lower()
-                        if not any(bad in txt for bad in ["cookie", "cancel", "close", "sign in", "log in"]):
-                            next_btn = cand
-                            break
-                    if next_btn:
-                        break
-                except Exception:
-                    continue
+        # Multi-step wizard loop: advance through up to 5 steps while Submit is not yet visible
+        step = 1
+        max_steps = 5
+        while not submit_btn and step <= max_steps:
+            prog_btn = self._find_progression_button(target)
+            if not prog_btn:
+                # Fallback to Vision LLM to see if there is an advancement button
+                v_btn_txt = self._vision_detect_progression_button(page)
+                if v_btn_txt:
+                    try:
+                        cand = target.locator(f'button:has-text("{v_btn_txt}"), a:has-text("{v_btn_txt}"), [role="button"]:has-text("{v_btn_txt}")').first
+                        if cand.is_visible(timeout=1000):
+                            prog_btn = cand
+                    except Exception:
+                        pass
 
-            if next_btn:
-                print(f"⏩ Found multi-step form button: '{next_btn.inner_text().strip()}'. Clicking to advance to next step...", flush=True)
-                try:
-                    next_btn.click(force=True)
-                    time.sleep(2)
-                    self._fill_text_inputs(target)
-                    self._fill_native_dropdowns(target)
-                    self._handle_checkboxes_and_radios(target)
-                    self._fill_remaining_required_fields(target)
-                    submit_btn = self._find_submit_button(target)
-                except Exception as e:
-                    print(f"⚠️ Error advancing multi-step form: {e}", flush=True)
+            if not prog_btn:
+                # No more progression buttons found on this step
+                break
+
+            btn_txt = (prog_btn.inner_text() or prog_btn.get_attribute("value") or "").strip()
+            print(f"⏩ [Step {step}] Advancing multi-step form with button: '{btn_txt}'", flush=True)
+            try:
+                prog_btn.click(force=True)
+                time.sleep(2)
+                self._wait_for_form_hydration(page)
+                # Fill any new fields appearing on the next step
+                self._upload_resume(target)
+                self._fill_text_inputs(target)
+                self._handle_react_and_custom_selects(target)
+                self._fill_native_dropdowns(target)
+                self._handle_checkboxes_and_radios(target)
+                self._handle_question_checkbox_groups(target)
+                self._fill_remaining_required_fields(target)
+
+                # Check if submit button is now visible
+                submit_btn = self._find_submit_button(target)
+                step += 1
+            except Exception as e:
+                print(f"⚠️ Error advancing step {step}: {e}", flush=True)
+                break
 
         if not submit_btn:
             print("🚫 No submit button found on page (portal directory, external index, or closed).", flush=True)
