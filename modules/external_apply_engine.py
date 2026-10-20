@@ -77,7 +77,7 @@ class ExternalApplyEngine:
     def __init__(self, headless: bool = True):
         self.headless = headless
         self.profile = get_candidate_profile()
-        self.vision_model = getattr(cs, "browser_vision_model", "qwen3.5:9b")
+        self.vision_model = getattr(cs, "browser_vision_model", "qwen3.5:2b")
         self.log_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "logs", "external_applications")
         os.makedirs(self.log_dir, exist_ok=True)
 
@@ -87,20 +87,28 @@ class ExternalApplyEngine:
             return ""
         try:
             img = Image.open(image_path)
-            img.thumbnail((1024, 1024))
+            img.thumbnail((768, 768))
             buf = io.BytesIO()
-            img.save(buf, format="JPEG", quality=80)
+            img.save(buf, format="JPEG", quality=70)
             b64 = base64.b64encode(buf.getvalue()).decode("utf-8")
 
             payload = {
                 "model": self.vision_model,
                 "prompt": prompt,
                 "images": [b64],
-                "stream": False
+                "stream": False,
+                "options": {
+                    "num_predict": 100,
+                    "temperature": 0.1
+                }
             }
-            resp = requests.post("http://localhost:11434/api/generate", json=payload, timeout=90)
+            resp = requests.post("http://localhost:11434/api/generate", json=payload, timeout=120)
             if resp.status_code == 200:
-                return resp.json().get("response", "").strip()
+                data = resp.json()
+                text = (data.get("response") or "").strip()
+                if not text:
+                    text = (data.get("thinking") or "").strip()
+                return text
         except Exception as e:
             print(f"⚠️ Vision reasoning ({self.vision_model}) notice: {e}", flush=True)
         return ""
@@ -228,30 +236,34 @@ class ExternalApplyEngine:
 
                 # 13. Post-submission screenshot & Vision LLM verification
                 post_screen = os.path.join(self.log_dir, f"{ts}_{safe_slug}_submitted.png")
+                submit_res["screenshot"] = post_screen
                 try:
                     page.screenshot(path=post_screen, full_page=True)
-                    print(f"📸 Saved post-submission screenshot: {post_screen}", flush=True)
-                    print(f"👁️ [Vision LLM ({self.vision_model})] Reading post-submission screenshot to verify outcome...", flush=True)
-                    v_verify = self._analyze_screenshot(
-                        post_screen,
-                        "Analyze this screenshot taken immediately after clicking submit on a job application. "
-                        "Did the application submit successfully (look for thank you message, application received, confirmation notice)? "
-                        "Or does it show validation errors (missing required field, red error notice, invalid input)? "
-                        "Start your answer with CONFIRMED if successful, or ERRORS if failed, followed by 1 concise sentence."
-                    )
-                    print(f"👁️ [Vision LLM ({self.vision_model})] Decision: {v_verify}", flush=True)
-                    if "CONFIRMED" in v_verify.upper():
-                        submit_res["success"] = True
-                        submit_res["message"] = f"Confirmed via Vision LLM ({self.vision_model}): {v_verify}"
-                        submit_res["confirmation_type"] = "vision_llm"
-                    elif "ERRORS" in v_verify.upper() or "ERROR" in v_verify.upper():
-                        submit_res["success"] = False
-                        submit_res["message"] = f"Vision LLM detected validation error: {v_verify}"
+                    print(f"📸 Saved final screenshot: {post_screen}", flush=True)
+
+                    if submit_res.get("clicked_submit"):
+                        print(f"👁️ [Vision LLM ({self.vision_model})] Reading post-submission screenshot to verify outcome...", flush=True)
+                        v_verify = self._analyze_screenshot(
+                            post_screen,
+                            "Analyze this screenshot taken immediately after clicking submit on a job application. "
+                            "Did the application submit successfully (look for thank you message, application received, confirmation notice)? "
+                            "Or does it show validation errors (missing required field, red error notice, invalid input)? "
+                            "Start your answer with CONFIRMED if successful, or ERRORS if failed, followed by 1 concise sentence."
+                        )
+                        print(f"👁️ [Vision LLM ({self.vision_model})] Decision: {v_verify}", flush=True)
+                        if "CONFIRMED" in v_verify.upper():
+                            submit_res["success"] = True
+                            submit_res["message"] = f"Confirmed via Vision LLM ({self.vision_model}): {v_verify}"
+                            submit_res["confirmation_type"] = "vision_llm"
+                        elif "ERRORS" in v_verify.upper() or "ERROR" in v_verify.upper():
+                            submit_res["success"] = False
+                            submit_res["message"] = f"Vision LLM detected validation error: {v_verify}"
+                    elif submit_res.get("expired"):
+                        print(f"ℹ️ Position closed or portal directory without submit form. Skipping post-submission verification.", flush=True)
                 except Exception as e:
                     print(f"⚠️ Vision post-submit check notice: {e}", flush=True)
 
                 browser.close()
-                submit_res["screenshot"] = post_screen
                 return submit_res
 
             except Exception as e:
@@ -706,14 +718,24 @@ class ExternalApplyEngine:
                 continue
 
         if not submit_btn:
-            return {"success": False, "message": "Submit button not found on page"}
+            print("🚫 No submit button found on page (portal directory, external index, or closed).", flush=True)
+            return {
+                "success": False,
+                "message": "Submit button not found on page (not an application form or position closed)",
+                "expired": True,
+                "clicked_submit": False
+            }
 
         try:
             if submit_btn.is_disabled():
                 print("⚠️ Submit button initially disabled. Waiting 2s for validation...", flush=True)
                 time.sleep(2)
                 if submit_btn.is_disabled():
-                    return {"success": False, "message": "Submit button remained disabled (required fields missing)"}
+                    return {
+                        "success": False,
+                        "message": "Submit button remained disabled (required fields missing)",
+                        "clicked_submit": False
+                    }
         except Exception:
             pass
 
@@ -730,7 +752,8 @@ class ExternalApplyEngine:
                 return {
                     "success": True,
                     "message": f"Application confirmed via URL: {curr_url}",
-                    "confirmation_type": "url"
+                    "confirmation_type": "url",
+                    "clicked_submit": True
                 }
 
             body_text = page.locator("body").inner_text().lower()
@@ -748,7 +771,8 @@ class ExternalApplyEngine:
                 return {
                     "success": True,
                     "message": "Application confirmed via on-screen message",
-                    "confirmation_type": "screen_text"
+                    "confirmation_type": "screen_text",
+                    "clicked_submit": True
                 }
 
         body_text = page.locator("body").inner_text().lower()
@@ -757,12 +781,17 @@ class ExternalApplyEngine:
             "phone is invalid", "invalid phone", "please correct the errors",
             "please review the errors", "there was a problem with your submission"
         ]):
-            return {"success": False, "message": "Form validation error (required fields or phone validation)"}
+            return {
+                "success": False,
+                "message": "Form validation error (required fields or phone validation)",
+                "clicked_submit": True
+            }
 
         return {
             "success": True,
             "message": "Form submitted successfully (submission initiated without errors)",
-            "confirmation_type": "form_submitted"
+            "confirmation_type": "form_submitted",
+            "clicked_submit": True
         }
 
 def run_external_apply(application_link: str, cv_data: str = "", company_name: str = "", job_title: str = "") -> dict:

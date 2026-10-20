@@ -58,7 +58,7 @@ llm_model = "qwen2.5:7b"                # Options in your Ollama: "qwen2.5:7b", 
 gmail_ai_model = "qwen3:1.7b"
 
 # Vision LLM model specifically for External Applications (reads screenshots to make decisions & verify submissions)
-browser_vision_model = "qwen3.5:9b"    # Options in your Ollama: "qwen3.5:9b", "qwen3.5:27b", "qwen3.5:2b"
+browser_vision_model = "qwen3.5:2b"    # Options in your Ollama: "qwen3.5:2b" (recommended fast), "qwen3.5:9b"
 
 llm_spec = "openai"                # OpenAI-compatible format for Ollama
 
