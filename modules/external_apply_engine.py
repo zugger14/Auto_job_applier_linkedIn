@@ -5,6 +5,9 @@ import time
 import json
 from datetime import datetime
 import requests
+import base64
+import io
+from PIL import Image
 from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -74,8 +77,33 @@ class ExternalApplyEngine:
     def __init__(self, headless: bool = True):
         self.headless = headless
         self.profile = get_candidate_profile()
+        self.vision_model = getattr(cs, "browser_vision_model", "qwen3.5:9b")
         self.log_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "logs", "external_applications")
         os.makedirs(self.log_dir, exist_ok=True)
+
+    def _analyze_screenshot(self, image_path: str, prompt: str) -> str:
+        """Sends a scaled screenshot to the local Ollama vision LLM for visual reasoning."""
+        if not os.path.exists(image_path):
+            return ""
+        try:
+            img = Image.open(image_path)
+            img.thumbnail((1024, 1024))
+            buf = io.BytesIO()
+            img.save(buf, format="JPEG", quality=80)
+            b64 = base64.b64encode(buf.getvalue()).decode("utf-8")
+
+            payload = {
+                "model": self.vision_model,
+                "prompt": prompt,
+                "images": [b64],
+                "stream": False
+            }
+            resp = requests.post("http://localhost:11434/api/generate", json=payload, timeout=90)
+            if resp.status_code == 200:
+                return resp.json().get("response", "").strip()
+        except Exception as e:
+            print(f"⚠️ Vision reasoning ({self.vision_model}) notice: {e}", flush=True)
+        return ""
 
     def apply_to_job(self, application_url: str, job_title: str = "", company_name: str = "") -> dict:
         print(f"\n=======================================================", flush=True)
@@ -134,9 +162,28 @@ class ExternalApplyEngine:
                 # 4. Wait for dynamic form hydration (Manatal, Greenhouse, Ashby, Lever, etc.)
                 self._wait_for_form_hydration(page)
 
-                # If after hydration there are still no form inputs at all, check if page has no form
+                # If after hydration there are still no form inputs at all, check with Vision LLM
                 input_count = page.locator('input, textarea, select').count()
                 if input_count == 0:
+                    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+                    safe_slug = re.sub(r'[^a-zA-Z0-9]', '_', company_name or "external_job")[:25]
+                    landing_screen = os.path.join(self.log_dir, f"{ts}_{safe_slug}_landing.png")
+                    try:
+                        page.screenshot(path=landing_screen)
+                        print(f"👁️ [Vision LLM ({self.vision_model})] Reading screenshot to determine job status...", flush=True)
+                        vision_check = self._analyze_screenshot(
+                            landing_screen,
+                            "Analyze this webpage screenshot. Is this an open job posting with an active application form, "
+                            "or is it closed, expired, not found, or an error page? "
+                            "State 'CLOSED' if closed/expired, or 'OPEN' if active, with 1 concise sentence."
+                        )
+                        print(f"👁️ [Vision LLM ({self.vision_model})] Page Decision: {vision_check}", flush=True)
+                        if "CLOSED" in vision_check.upper():
+                            browser.close()
+                            return {"success": False, "expired": True, "message": f"Vision LLM: {vision_check}"}
+                    except Exception:
+                        pass
+
                     print(f"🚫 No form fields found on page (likely closed or portal index): {application_url}", flush=True)
                     browser.close()
                     return {"success": False, "expired": True, "message": "No application form found on page"}
@@ -179,12 +226,29 @@ class ExternalApplyEngine:
                 # 12. Submit & Verify
                 submit_res = self._submit_and_verify(page, company_name, job_title)
 
-                # 13. Post-submission screenshot
+                # 13. Post-submission screenshot & Vision LLM verification
                 post_screen = os.path.join(self.log_dir, f"{ts}_{safe_slug}_submitted.png")
                 try:
                     page.screenshot(path=post_screen, full_page=True)
-                except Exception:
-                    pass
+                    print(f"📸 Saved post-submission screenshot: {post_screen}", flush=True)
+                    print(f"👁️ [Vision LLM ({self.vision_model})] Reading post-submission screenshot to verify outcome...", flush=True)
+                    v_verify = self._analyze_screenshot(
+                        post_screen,
+                        "Analyze this screenshot taken immediately after clicking submit on a job application. "
+                        "Did the application submit successfully (look for thank you message, application received, confirmation notice)? "
+                        "Or does it show validation errors (missing required field, red error notice, invalid input)? "
+                        "Start your answer with CONFIRMED if successful, or ERRORS if failed, followed by 1 concise sentence."
+                    )
+                    print(f"👁️ [Vision LLM ({self.vision_model})] Decision: {v_verify}", flush=True)
+                    if "CONFIRMED" in v_verify.upper():
+                        submit_res["success"] = True
+                        submit_res["message"] = f"Confirmed via Vision LLM ({self.vision_model}): {v_verify}"
+                        submit_res["confirmation_type"] = "vision_llm"
+                    elif "ERRORS" in v_verify.upper() or "ERROR" in v_verify.upper():
+                        submit_res["success"] = False
+                        submit_res["message"] = f"Vision LLM detected validation error: {v_verify}"
+                except Exception as e:
+                    print(f"⚠️ Vision post-submit check notice: {e}", flush=True)
 
                 browser.close()
                 submit_res["screenshot"] = post_screen

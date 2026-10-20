@@ -57,6 +57,9 @@ llm_model = "qwen2.5:7b"                # Options in your Ollama: "qwen2.5:7b", 
 # Fast LLM model specifically for Gmail status tracking & email categorization (local Ollama)
 gmail_ai_model = "qwen3:1.7b"
 
+# Vision LLM model specifically for External Applications (reads screenshots to make decisions & verify submissions)
+browser_vision_model = "qwen3.5:9b"    # Options in your Ollama: "qwen3.5:9b", "qwen3.5:27b", "qwen3.5:2b"
+
 llm_spec = "openai"                # OpenAI-compatible format for Ollama
 
 # # Yor local embedding model name or other AI Embedding model name 
