@@ -104,15 +104,48 @@ class ExternalApplyEngine:
 
                 time.sleep(2)
 
-                # 2. Handle initial Apply button if on job description page
+                # Check if job is expired or closed
+                curr_url = page.url.lower()
+                title_lower = page.title().lower()
+                body_lower = page.locator("body").inner_text().lower()
+
+                CLOSED_PHRASES = [
+                    "job not found", "the job you requested was not found", "page not found",
+                    "404 not found", "404 - not found", "404 |", "no longer available",
+                    "job has expired", "position has been filled", "no longer accepting applications",
+                    "this job has closed", "job opening is closed", "posting has expired",
+                    "job does not exist", "oops, you've gone too far",
+                    "the page you were trying to access is no longer available",
+                    "this position is no longer open", "position closed", "not accepting applications",
+                    "job has been removed", "job is inactive", "this job is no longer available"
+                ]
+
+                if "error=true" in curr_url or any(t in title_lower for t in ["404", "not found", "error", "expired"]) or any(msg in body_lower for msg in CLOSED_PHRASES):
+                    print(f"🚫 Job is expired, closed, or 404 on external portal: {application_url}", flush=True)
+                    browser.close()
+                    return {"success": False, "expired": True, "message": "Position is closed or no longer accepting applications"}
+
+                # 2. Dismiss cookie dialogs if present
+                self._dismiss_cookie_banners(page)
+
+                # 3. Handle initial Apply button if on job description page
                 self._handle_initial_apply_button(page)
 
-                # 3. Wait for dynamic form hydration (Manatal, Greenhouse, Ashby, Lever, etc.)
+                # 4. Wait for dynamic form hydration (Manatal, Greenhouse, Ashby, Lever, etc.)
                 self._wait_for_form_hydration(page)
+
+                # If after hydration there are still no form inputs at all, check if page has no form
+                input_count = page.locator('input, textarea, select').count()
+                if input_count == 0:
+                    print(f"🚫 No form fields found on page (likely closed or portal index): {application_url}", flush=True)
+                    browser.close()
+                    return {"success": False, "expired": True, "message": "No application form found on page"}
 
                 # 4. Upload Resume
                 uploaded = self._upload_resume(page)
                 print(f"📄 Resume upload: {'Success' if uploaded else 'None found/already attached'}", flush=True)
+
+                self._dismiss_cookie_banners(page)
 
                 # 5. Fill Text, Tel, and Email Fields
                 filled_count = self._fill_text_inputs(page)
@@ -166,6 +199,46 @@ class ExternalApplyEngine:
                     pass
                 browser.close()
                 return {"success": False, "message": f"Error: {e}", "screenshot": err_screen}
+
+    def _dismiss_cookie_banners(self, page):
+        cookie_selectors = [
+            'button:has-text("Accept all cookies")',
+            'button:has-text("Accept all")',
+            'button:has-text("Accept Cookies")',
+            'button:has-text("Accept cookies")',
+            'button:has-text("I agree")',
+            'button:has-text("Allow all")',
+            'button:has-text("Got it")',
+            'button:has-text("Decline all non-necessary cookies")',
+            '#onetrust-accept-btn-handler',
+            '.cookie-consent-accept',
+            '[aria-label="Accept all cookies"]'
+        ]
+        for sel in cookie_selectors:
+            try:
+                btn = page.locator(sel).first
+                if btn.is_visible(timeout=500):
+                    btn.click()
+                    time.sleep(0.5)
+                    break
+            except Exception:
+                pass
+
+        # Close dialogs or cookie popups only (never touch body/html/main)
+        try:
+            page.evaluate('''() => {
+                document.querySelectorAll('dialog, .z-cookie-alert, #onetrust-banner-sdk').forEach(el => {
+                    if (['BODY', 'HTML', 'MAIN'].includes(el.tagName)) return;
+                    let b = el.querySelector('button');
+                    if (b) {
+                        try { b.click(); } catch(e) {}
+                    }
+                    el.style.display = 'none';
+                    try { el.remove(); } catch(e) {}
+                });
+            }''')
+        except Exception:
+            pass
 
     def _handle_initial_apply_button(self, page):
         has_form = page.locator('input[type="file"], input[name*="name" i], #first_name, #_systemfield_name').count() > 0
@@ -225,7 +298,13 @@ class ExternalApplyEngine:
         if target_input:
             try:
                 target_input.set_input_files(resume_path)
-                time.sleep(1.5)
+                time.sleep(2)
+                # Wait for any upload spinner/progress to finish
+                for _ in range(8):
+                    busy = page.locator('.filepond--item-state-busy, [class*="uploading" i], [class*="progress-bar" i], .spinner-border:visible').count()
+                    if busy == 0:
+                        break
+                    time.sleep(1)
                 return True
             except Exception as e:
                 print(f"⚠️ Failed to upload file to target input: {e}", flush=True)
@@ -268,17 +347,16 @@ class ExternalApplyEngine:
                 full_desc = f"{ctx['label']} {ctx['placeholder']} {ctx['name']} {ctx['id']} {ctx['aria']}"
                 val = None
 
-                if any(k in full_desc for k in ["first name", "firstname", "given name", "first_name"]):
+                # Full name matched first so 'first and last name' does not get cut to first name only
+                if any(k in full_desc for k in ["full name", "fullname", "first and last name", "first & last name", "your name", "_systemfield_name", "candidate name"]):
+                    val = self.profile["full_name"]
+                elif any(k in full_desc for k in ["first name", "firstname", "given name", "first_name"]):
                     val = self.profile["first_name"]
                 elif any(k in full_desc for k in ["last name", "lastname", "family name", "surname", "last_name"]):
                     val = self.profile["last_name"]
-                elif any(k in full_desc for k in ["full name", "fullname", "your name", "_systemfield_name", "candidate name"]) or (
-                    "name" in full_desc and not any(x in full_desc for x in ["company", "user", "file", "school", "hr"])
-                ):
-                    val = self.profile["full_name"]
                 elif any(k in full_desc for k in ["email", "e-mail", "@"]):
                     val = self.profile["email"]
-                elif any(k in full_desc for k in ["phone", "mobile", "telephone", "tel", "cell"]):
+                elif ctx["tag"] != "textarea" and re.search(r'\b(phone|mobile|telephone|cell|cellphone)\b', full_desc, re.I):
                     val = self.profile["phone"]
                 elif any(k in full_desc for k in ["linkedin"]):
                     val = self.profile["linkedin"]
@@ -298,8 +376,10 @@ class ExternalApplyEngine:
                     val = self.profile["desired_salary"]
                 elif any(k in full_desc for k in ["notice period", "how soon", "when can you start", "start date"]):
                     val = "Immediately / 2 weeks"
-                elif ctx["tag"] == "textarea" or any(k in full_desc for k in ["cover letter", "about yourself", "summary", "additional information"]):
+                elif ctx["tag"] == "textarea" or any(k in full_desc for k in ["cover letter", "about yourself", "summary", "additional information", "tell us", "why do you want", "experience", "describe"]):
                     val = self.profile["summary"]
+                elif ("name" in full_desc and not any(x in full_desc for x in ["company", "user", "file", "school", "hr", "domain"])):
+                    val = self.profile["full_name"]
 
                 if val is not None:
                     el.fill(str(val))
@@ -377,31 +457,34 @@ class ExternalApplyEngine:
             except Exception:
                 continue
 
-        # B. Custom dropdown buttons (Radix UI / Careers-page)
-        custom_triggers = page.locator('button[role="combobox"], button:has-text("-"), [class*="select-trigger"]').all()
+        # B. Custom dropdown buttons (Radix UI / Careers-page / Teamtailor)
+        custom_triggers = page.locator('button[role="combobox"], button:has-text("-"), [class*="select-trigger"], button[aria-label="Select an option"], button:has-text("Select an option")').all()
         for trigger in custom_triggers:
             try:
                 if not trigger.is_visible():
                     continue
                 btn_text = trigger.inner_text().strip()
-                if btn_text and btn_text not in ["-", "Select...", "Select", "Please select", "Choose option"]:
+                if btn_text and btn_text not in ["-", "Select...", "Select", "Please select", "Choose option", "Select an option"]:
                     continue
 
-                trigger.click()
+                trigger.click(force=True)
                 time.sleep(0.5)
 
-                menu_options = page.locator('[role="option"]:visible, [role="menuitem"]:visible, li.select2-results__option:visible').all()
+                menu_options = page.locator('[role="option"]:visible, [role="menuitem"]:visible, li.select2-results__option:visible, [role="listbox"] button:visible, [class*="dropdown"] button:visible').all()
                 if menu_options:
                     picked = False
                     for opt in menu_options:
                         txt = opt.inner_text().strip().lower()
-                        if any(good in txt for good in ["linkedin", "yes", "website", "authorized", "referral"]):
-                            opt.click()
+                        if any(good in txt for good in ["devops", "cloud", "engineer", "software", "nepal", "remote", "latin", "yes", "authorized"]):
+                            opt.click(force=True)
                             picked = True
                             handled += 1
                             break
                     if not picked and len(menu_options) > 1:
-                        menu_options[1].click()
+                        menu_options[1].click(force=True)
+                        handled += 1
+                    elif not picked and len(menu_options) == 1:
+                        menu_options[0].click(force=True)
                         handled += 1
                 else:
                     page.locator('body').click(position={"x": 10, "y": 10})
@@ -528,22 +611,32 @@ class ExternalApplyEngine:
 
     def _submit_and_verify(self, page, company_name: str, job_title: str) -> dict:
         submit_selectors = [
-            'button[type="submit"]',
-            'input[type="submit"]',
-            'button:has-text("Submit Application")',
             'button:has-text("Submit application")',
-            'button:has-text("Apply now")',
+            'button:has-text("Submit Application")',
+            'input[type="submit"][value*="Submit" i]',
+            'input[type="submit"][value*="Apply" i]',
             'button:has-text("Submit")',
             'button:has-text("Send Application")',
+            'button:has-text("Apply now")',
+            'input[type="submit"]',
+            'button[type="submit"]',
             '#submit_app'
         ]
 
         submit_btn = None
         for sel in submit_selectors:
             try:
-                btn = page.locator(sel).first
-                if btn.is_visible(timeout=1000):
+                candidates = page.locator(sel).all()
+                for btn in candidates:
+                    if not btn.is_visible():
+                        continue
+                    btn_text = (btn.inner_text() or btn.get_attribute("value") or "").strip().lower()
+                    # Ignore login, sign in, search, cookie, cancel buttons
+                    if any(bad in btn_text for bad in ["log in", "sign in", "cookie", "search", "close", "cancel", "manage"]):
+                        continue
                     submit_btn = btn
+                    break
+                if submit_btn:
                     break
             except Exception:
                 continue
@@ -560,8 +653,9 @@ class ExternalApplyEngine:
         except Exception:
             pass
 
-        print(f"🚀 Clicking Submit button: '{submit_btn.inner_text().strip()}'", flush=True)
-        submit_btn.click()
+        submit_btn_txt = (submit_btn.inner_text() or submit_btn.get_attribute("value") or "").strip()
+        print(f"🚀 Clicking Submit button: '{submit_btn_txt}'", flush=True)
+        submit_btn.click(force=True)
 
         print("⏳ Waiting for submission confirmation...", flush=True)
         for _ in range(15):
@@ -594,8 +688,12 @@ class ExternalApplyEngine:
                 }
 
         body_text = page.locator("body").inner_text().lower()
-        if "error" in body_text and any(e in body_text for e in ["required", "missing", "invalid", "captcha"]):
-            return {"success": False, "message": "Submission error or captcha present on page"}
+        if any(e in body_text for e in [
+            "could not be saved", "can't be blank", "please fill in", "field is required",
+            "phone is invalid", "invalid phone", "please correct the errors",
+            "please review the errors", "there was a problem with your submission"
+        ]):
+            return {"success": False, "message": "Form validation error (required fields or phone validation)"}
 
         return {
             "success": True,
@@ -603,12 +701,12 @@ class ExternalApplyEngine:
             "confirmation_type": "form_submitted"
         }
 
-def run_external_apply(application_link: str, cv_data: str = "", company_name: str = "", job_title: str = "") -> bool:
+def run_external_apply(application_link: str, cv_data: str = "", company_name: str = "", job_title: str = "") -> dict:
     headless_setting = os.environ.get("HEADLESS_MODE", "True").lower() == "true"
     engine = ExternalApplyEngine(headless=headless_setting)
     res = engine.apply_to_job(application_link, job_title=job_title, company_name=company_name)
     print(f"🏁 Final Result: {res}", flush=True)
-    return res.get("success", False)
+    return res
 
 if __name__ == "__main__":
     test_url = sys.argv[1] if len(sys.argv) > 1 else "https://job-boards.greenhouse.io/particle41llc/jobs/4499232008?gh_src=f730200f8us"

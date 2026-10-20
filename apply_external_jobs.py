@@ -88,8 +88,8 @@ def run_batch_apply():
         ext_link = row.get('External Job link', '')
         status = row.get('Status', '')
         failed_attempts = get_failed_attempts(row)
-        # Only apply if it hasn't been applied externally yet and hasn't exceeded max retries
-        if ext_link and ext_link != 'Easy Applied' and status != 'Externally Applied' and failed_attempts < MAX_RETRIES:
+        # Only apply if it hasn't been applied externally yet, not closed, and hasn't exceeded max retries
+        if ext_link and ext_link != 'Easy Applied' and status not in ['Externally Applied', 'Position Closed'] and failed_attempts < MAX_RETRIES:
             # Clean and ensure URL scheme
             sanitized_link = ext_link.strip()
             if not sanitized_link.lower().startswith(('http://', 'https://')):
@@ -123,9 +123,20 @@ def run_batch_apply():
         attempt_success = False
         for attempt in range(1, MAX_RETRIES + 1):
             try:
-                success = run_browser_use_apply(link, cq.user_information_all, company_name=comp, job_title=title)
-                if success:
-                    print(f"✅ Successfully applied externally on attempt {attempt}!")
+                result = run_browser_use_apply(link, cq.user_information_all, company_name=comp, job_title=title)
+                if isinstance(result, bool):
+                    result = {"success": result, "message": "Form submitted" if result else "Failed"}
+
+                if result.get("expired"):
+                    print(f"🚫 Position closed or no application form found on company portal.")
+                    print(f"   Marked as 'Position Closed'. Skipping retries.")
+                    rows[row_idx]['Status'] = 'Position Closed'
+                    rows[row_idx]['Failed Attempts'] = '0'
+                    attempt_success = True
+                    break
+
+                if result.get("success"):
+                    print(f"✅ Successfully applied externally on attempt {attempt}! ({result.get('message', 'Applied')})")
                     rows[row_idx]['Status'] = 'Externally Applied'
                     rows[row_idx]['Date Applied'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
                     rows[row_idx]['Failed Attempts'] = '0'
@@ -135,7 +146,8 @@ def run_batch_apply():
                     attempt_success = True
                     break
                 else:
-                    print(f"❌ Browser-Use run failed on attempt {attempt}.")
+                    msg = result.get('message', 'Form incomplete or submission error')
+                    print(f"⚠️ Attempt {attempt}/{MAX_RETRIES} did not complete: {msg}")
             except Exception as e:
                 print(f"⚠️ Attempt {attempt} error: {e}")
             # exponential backoff before next retry

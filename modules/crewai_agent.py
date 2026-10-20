@@ -134,26 +134,26 @@ AUTONOMOUS DECISION-MAKING RULES:
             if attempt == 2:
                 raise
 
-def run_browser_use_apply(application_link: str, cv_data: str = "", company_name: str = "", job_title: str = ""):
+def run_browser_use_apply(application_link: str, cv_data: str = "", company_name: str = "", job_title: str = "") -> dict:
     """
     Main synchronous wrapper function called by apply_external_jobs.py and runAiBot.py.
     Uses the robust Playwright-based external apply engine.
     """
     if not application_link or not isinstance(application_link, str):
         print("⚠️ No application link provided. Skipping.", flush=True)
-        return False
+        return {"success": False, "message": "No link provided"}
     if 'example.com' in application_link.lower():
         print(f"⚠️ Skipping placeholder URL: {application_link}", flush=True)
-        return False
+        return {"success": False, "message": "Placeholder URL"}
 
     print("--- 🚀 Starting Intelligent External Apply Engine ---", flush=True)
     try:
         from modules.external_apply_engine import run_external_apply
-        success = run_external_apply(application_link, cv_data=cv_data, company_name=company_name, job_title=job_title)
-        return success
+        res = run_external_apply(application_link, cv_data=cv_data, company_name=company_name, job_title=job_title)
+        return res
     except Exception as e:
         print(f"❌ External Apply Engine error: {e}", flush=True)
-        return False
+        return {"success": False, "message": str(e)}
 
 # For local testing if you run this script directly
 if __name__ == "__main__":
