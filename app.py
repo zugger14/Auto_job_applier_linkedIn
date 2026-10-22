@@ -323,6 +323,14 @@ def apply_external():
             sys.stdout = capture
             sys.stderr = capture
             try:
+                try:
+                    import config.settings as settings
+                    is_bg = getattr(settings, "run_in_background", False)
+                except Exception:
+                    is_bg = False
+                if "HEADLESS_MODE" not in os.environ:
+                    os.environ["HEADLESS_MODE"] = "True" if is_bg else "False"
+
                 from apply_external_jobs import run_batch_apply
                 run_batch_apply()
                 print(f"[{datetime.now().strftime('%H:%M:%S')}] ✅ All external job applications completed!")

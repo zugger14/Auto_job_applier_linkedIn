@@ -8,6 +8,7 @@ import requests
 import base64
 import io
 from PIL import Image
+from typing import Optional
 from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -72,10 +73,19 @@ def get_candidate_profile():
         "veteran": getattr(cp, "veteran_status", "No"),
         "disability": getattr(cp, "disability_status", "No")
     }
-
 class ExternalApplyEngine:
-    def __init__(self, headless: bool = True):
-        self.headless = headless
+    def __init__(self, headless: Optional[bool] = None):
+        if headless is None:
+            if "HEADLESS_MODE" in os.environ:
+                self.headless = os.environ.get("HEADLESS_MODE", "").lower() == "true"
+            else:
+                try:
+                    import config.settings as settings
+                    self.headless = getattr(settings, "run_in_background", False)
+                except Exception:
+                    self.headless = False
+        else:
+            self.headless = headless
         self.profile = get_candidate_profile()
         self.vision_model = getattr(cs, "browser_vision_model", "qwen3.5:2b")
         self.log_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "logs", "external_applications")
@@ -123,16 +133,30 @@ class ExternalApplyEngine:
         print(f"Resume: {self.profile['resume_path']}", flush=True)
         print(f"=======================================================", flush=True)
 
+        mode_str = "Headless Background Mode" if self.headless else "Visible Google Chrome Window"
+        print(f"🖥️ Browser Mode: {mode_str}", flush=True)
+
         with sync_playwright() as p:
-            browser = p.chromium.launch(
-                headless=self.headless,
-                args=[
-                    "--disable-blink-features=AutomationControlled",
-                    "--no-sandbox",
-                    "--disable-dev-shm-usage",
-                    "--disable-infobars"
-                ]
-            )
+            launch_args = [
+                "--disable-blink-features=AutomationControlled",
+                "--no-sandbox",
+                "--disable-dev-shm-usage",
+                "--disable-infobars"
+            ]
+            browser = None
+            try:
+                # Launch actual Google Chrome when available
+                browser = p.chromium.launch(
+                    channel="chrome",
+                    headless=self.headless,
+                    args=launch_args
+                )
+            except Exception:
+                # Fallback to Playwright's bundled Chromium
+                browser = p.chromium.launch(
+                    headless=self.headless,
+                    args=launch_args
+                )
             context = browser.new_context(
                 viewport={"width": 1280, "height": 900},
                 user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
@@ -462,17 +486,28 @@ class ExternalApplyEngine:
             has_bframe = any("bframe" in f.url for f in page.frames) or page.locator('iframe[src*="bframe"], iframe[title*="recaptcha challenge" i]').count() > 0
             if has_bframe:
                 if not self.headless:
-                    print("🛡️ Interactive image CAPTCHA puzzle detected. Browser window is open — waiting up to 25s for human solve...", flush=True)
-                    for _ in range(25):
+                    print("🛡️ Interactive image CAPTCHA puzzle detected! Please solve it in the open Google Chrome window (waiting up to 45s)...", flush=True)
+                    for remaining in range(45, 0, -1):
                         time.sleep(1)
+                        # 1. Check if recaptcha anchor checkbox is now checked
                         for frame in page.frames:
                             if "recaptcha" in frame.url and "anchor" in frame.url:
                                 try:
                                     if frame.locator('.recaptcha-checkbox[aria-checked="true"]').count() > 0:
-                                        print("🎉 CAPTCHA was solved manually! Continuing application...", flush=True)
+                                        print("🎉 CAPTCHA was solved! Continuing application...", flush=True)
+                                        time.sleep(1)
                                         return {"handled": True, "blocked": False, "message": "Manual CAPTCHA solved"}
                                 except Exception:
                                     pass
+                        # 2. Check if challenge popup disappeared and application form is active
+                        if not any("bframe" in f.url for f in page.frames) and self._is_form_active(page):
+                            print("🎉 CAPTCHA challenge cleared! Continuing with application...", flush=True)
+                            time.sleep(1)
+                            return {"handled": True, "blocked": False, "message": "CAPTCHA challenge cleared"}
+
+                        if remaining in [30, 20, 10]:
+                            print(f"⏳ Waiting for CAPTCHA completion ({remaining}s remaining in Chrome window)...", flush=True)
+
                     print("⏳ Manual CAPTCHA solve timeout reached.", flush=True)
 
                 print("🛡️ Interactive image CAPTCHA puzzle detected (e.g. 'Select all squares with buses').", flush=True)
@@ -1367,9 +1402,8 @@ class ExternalApplyEngine:
             "clicked_submit": True
         }
 
-def run_external_apply(application_link: str, cv_data: str = "", company_name: str = "", job_title: str = "") -> dict:
-    headless_setting = os.environ.get("HEADLESS_MODE", "True").lower() == "true"
-    engine = ExternalApplyEngine(headless=headless_setting)
+def run_external_apply(application_link: str, cv_data: str = "", company_name: str = "", job_title: str = "", headless: Optional[bool] = None) -> dict:
+    engine = ExternalApplyEngine(headless=headless)
     res = engine.apply_to_job(application_link, job_title=job_title, company_name=company_name)
     print(f"🏁 Final Result: {res}", flush=True)
     return res

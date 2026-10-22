@@ -182,10 +182,21 @@ def run_batch_apply():
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser(description='Apply to external job links.')
-    parser.add_argument('--headful', action='store_true', help='Run Playwright in headed mode for debugging')
+    parser.add_argument('--headful', action='store_true', help='Run Playwright in visible Google Chrome mode')
+    parser.add_argument('--headless', action='store_true', help='Run Playwright in headless background mode')
     args = parser.parse_args()
-    # Set environment variable for headless mode used by crewai_agent
-    os.environ['HEADLESS_MODE'] = 'False' if args.headful else 'True'
+
+    if args.headful:
+        os.environ['HEADLESS_MODE'] = 'False'
+    elif args.headless:
+        os.environ['HEADLESS_MODE'] = 'True'
+    else:
+        try:
+            import config.settings as settings
+            os.environ['HEADLESS_MODE'] = 'True' if getattr(settings, "run_in_background", False) else 'False'
+        except Exception:
+            os.environ['HEADLESS_MODE'] = 'False'
+
     try:
         run_batch_apply()
     finally:
