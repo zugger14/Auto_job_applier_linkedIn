@@ -106,10 +106,12 @@ class ExternalApplyEngine:
             if resp.status_code == 200:
                 data = resp.json()
                 resp_text = (data.get("response") or "").strip()
+                if "<think>" in resp_text and "</think>" in resp_text:
+                    resp_text = re.sub(r'<think>.*?</think>', '', resp_text, flags=re.DOTALL).strip()
+                if resp_text:
+                    return resp_text
                 think_text = (data.get("thinking") or "").strip()
-                if resp_text and think_text:
-                    return f"{resp_text}\n{think_text}"
-                return resp_text or think_text
+                return think_text
         except Exception as e:
             print(f"⚠️ Vision reasoning ({self.vision_model}) notice: {e}", flush=True)
         return ""
@@ -280,19 +282,32 @@ class ExternalApplyEngine:
                         print(f"👁️ [Vision LLM ({self.vision_model})] Reading post-submission screenshot to verify outcome...", flush=True)
                         v_verify = self._analyze_screenshot(
                             post_screen,
-                            "Analyze this screenshot taken immediately after clicking submit on a job application. "
-                            "Did the application submit successfully (look for thank you message, application received, confirmation notice)? "
-                            "Or does it show validation errors (missing required field, red error notice, invalid input)? "
-                            "Start your answer with CONFIRMED if successful, or ERRORS if failed, followed by 1 concise sentence."
+                            "Analyze this screenshot taken immediately after clicking submit on a job application.\n"
+                            "Did the application submit successfully (thank you message, confirmation notice, application received)?\n"
+                            "Or does it show validation errors (missing required field, red error notice, invalid phone)?\n\n"
+                            "Reply strictly in this format:\n"
+                            "OUTCOME: SUCCESS\n"
+                            "or\n"
+                            "OUTCOME: FAILED - <brief reason>"
                         )
                         print(f"👁️ [Vision LLM ({self.vision_model})] Decision: {v_verify[:180]}...", flush=True)
-                        if "CONFIRMED" in v_verify.upper() or "APPLICATION SUBMITTED" in v_verify.upper():
+
+                        outcome = ""
+                        for line in reversed([l.strip() for l in v_verify.splitlines() if l.strip()]):
+                            if line.upper().startswith("OUTCOME:"):
+                                outcome = line.split(":", 1)[-1].strip()
+                                break
+                            elif line.upper().startswith("VERDICT:"):
+                                outcome = line.split(":", 1)[-1].strip()
+                                break
+
+                        if outcome.upper().startswith("SUCCESS") or "CONFIRMED" in v_verify.upper() or "APPLICATION SUBMITTED" in v_verify.upper():
                             submit_res["success"] = True
-                            submit_res["message"] = f"Confirmed via Vision LLM ({self.vision_model}): {v_verify[:120]}"
+                            submit_res["message"] = f"Confirmed via Vision LLM ({self.vision_model}): {outcome or v_verify[:120]}"
                             submit_res["confirmation_type"] = "vision_llm"
-                        elif any(err in v_verify.upper() for err in ["VALIDATION ERROR", "FIELD IS REQUIRED", "PLEASE CORRECT", "MISSING REQUIRED"]):
+                        elif outcome.upper().startswith("FAILED"):
                             submit_res["success"] = False
-                            submit_res["message"] = f"Vision LLM detected validation error: {v_verify[:120]}"
+                            submit_res["message"] = f"Vision LLM detected validation error: {outcome}"
                     elif submit_res.get("expired"):
                         print(f"ℹ️ Position closed or portal directory without submit form. Skipping post-submission verification.", flush=True)
                 except Exception as e:
@@ -446,6 +461,20 @@ class ExternalApplyEngine:
             # 4. Check if an interactive image challenge puzzle popped up (bframe)
             has_bframe = any("bframe" in f.url for f in page.frames) or page.locator('iframe[src*="bframe"], iframe[title*="recaptcha challenge" i]').count() > 0
             if has_bframe:
+                if not self.headless:
+                    print("🛡️ Interactive image CAPTCHA puzzle detected. Browser window is open — waiting up to 25s for human solve...", flush=True)
+                    for _ in range(25):
+                        time.sleep(1)
+                        for frame in page.frames:
+                            if "recaptcha" in frame.url and "anchor" in frame.url:
+                                try:
+                                    if frame.locator('.recaptcha-checkbox[aria-checked="true"]').count() > 0:
+                                        print("🎉 CAPTCHA was solved manually! Continuing application...", flush=True)
+                                        return {"handled": True, "blocked": False, "message": "Manual CAPTCHA solved"}
+                                except Exception:
+                                    pass
+                    print("⏳ Manual CAPTCHA solve timeout reached.", flush=True)
+
                 print("🛡️ Interactive image CAPTCHA puzzle detected (e.g. 'Select all squares with buses').", flush=True)
                 return {"handled": False, "blocked": True, "message": "Blocked by interactive image CAPTCHA puzzle"}
 
