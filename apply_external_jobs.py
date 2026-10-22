@@ -134,6 +134,13 @@ def run_batch_apply():
                 if isinstance(result, bool):
                     result = {"success": result, "message": "Form submitted" if result else "Failed"}
 
+                if result.get("captcha_blocked"):
+                    print(f"🛡️ Application blocked by visual CAPTCHA / bot challenge: {result.get('message')}")
+                    print(f"   Marked as 'Captcha Blocked'. Skipping further retries for this run.")
+                    rows[row_idx]['Status'] = 'Captcha Blocked'
+                    attempt_success = True
+                    break
+
                 if result.get("expired"):
                     print(f"🚫 Position closed or no application form found on company portal.")
                     print(f"   Marked as 'Position Closed'. Skipping retries.")

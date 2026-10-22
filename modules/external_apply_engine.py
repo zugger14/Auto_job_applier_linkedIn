@@ -124,12 +124,24 @@ class ExternalApplyEngine:
         with sync_playwright() as p:
             browser = p.chromium.launch(
                 headless=self.headless,
-                args=["--disable-blink-features=AutomationControlled"]
+                args=[
+                    "--disable-blink-features=AutomationControlled",
+                    "--no-sandbox",
+                    "--disable-dev-shm-usage",
+                    "--disable-infobars"
+                ]
             )
             context = browser.new_context(
                 viewport={"width": 1280, "height": 900},
-                user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+                user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
             )
+            # Inject stealth script to evade Cloudflare Turnstile and bot detection
+            context.add_init_script("""
+                Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+                window.chrome = { runtime: {} };
+                Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3, 4, 5] });
+                Object.defineProperty(navigator, 'languages', { get: () => ['en-US', 'en'] });
+            """)
             page = context.new_page()
 
             try:
@@ -188,14 +200,22 @@ class ExternalApplyEngine:
                         print(f"👁️ [Vision LLM ({self.vision_model})] Reading screenshot to determine job status...", flush=True)
                         vision_check = self._analyze_screenshot(
                             landing_screen,
-                            "Analyze this webpage screenshot. Is this an open job posting with an active application form, "
-                            "or is it closed, expired, not found, or an error page? "
-                            "State 'CLOSED' if closed/expired, or 'OPEN' if active, with 1 concise sentence."
+                            "Analyze this webpage screenshot.\n"
+                            "Is this job posting CLOSED/EXPIRED or is it an ACTIVE opening?\n\n"
+                            "Reply strictly in this format:\n"
+                            "VERDICT: CLOSED\n"
+                            "or\n"
+                            "VERDICT: ACTIVE"
                         )
-                        print(f"👁️ [Vision LLM ({self.vision_model})] Page Decision: {vision_check}", flush=True)
-                        if "CLOSED" in vision_check.upper():
+                        print(f"👁️ [Vision LLM ({self.vision_model})] Page Decision: {vision_check[:100]}...", flush=True)
+                        verdict = ""
+                        for line in reversed([l.strip() for l in vision_check.splitlines() if l.strip()]):
+                            if line.upper().startswith("VERDICT:"):
+                                verdict = line.upper().split("VERDICT:")[-1].strip()
+                                break
+                        if verdict in ["CLOSED", "EXPIRED", "NOT FOUND"]:
                             browser.close()
-                            return {"success": False, "expired": True, "message": f"Vision LLM: {vision_check}"}
+                            return {"success": False, "expired": True, "message": f"Vision LLM confirmed closed: {vision_check[:100]}"}
                     except Exception:
                         pass
 
@@ -228,7 +248,15 @@ class ExternalApplyEngine:
                 # 11. Handle Checkbox question groups (e.g. Salary ranges, preferences)
                 self._handle_question_checkbox_groups(form_target)
 
-                # 12. Fill any remaining invalid / required fields with defaults
+                # 12. Handle button-based Yes/No segmented toggles (Ashby / Workday)
+                seg_count = self._handle_segmented_button_toggles(form_target)
+                if seg_count:
+                    print(f"🔘 Selected {seg_count} segmented toggle options (Ashby/Workday)", flush=True)
+
+                # 13. Handle Ashby location combobox and date pickers
+                self._handle_ashby_and_specialty_inputs(form_target)
+
+                # 14. Fill any remaining invalid / required fields with defaults
                 self._fill_remaining_required_fields(form_target)
 
                 # 13. Pre-submission screenshot
@@ -323,58 +351,107 @@ class ExternalApplyEngine:
         except Exception:
             pass
 
-    def _handle_captchas_and_challenges(self, page) -> bool:
-        """Detects and attempts to solve/clear Cloudflare Turnstile, reCAPTCHA, and bot verification challenges."""
+    def _is_form_active(self, target) -> bool:
+        """Checks if an actual application form is currently visible on the target or in any embedded frame."""
+        try:
+            # 1. Resume upload or name field presence
+            if target.locator('input[type="file"], #resume, #first_name, input[name*="resume" i], input[name*="name" i]').count() >= 1:
+                return True
+            # 2. General form inputs count
+            if target.locator('input:not([type="hidden"]), textarea').count() >= 3:
+                return True
+            # 3. Check child frames
+            if hasattr(target, 'frames'):
+                for f in target.frames:
+                    if f != target.main_frame and f.locator('input[type="file"], #first_name, input[name*="name" i]').count() >= 1:
+                        return True
+        except Exception:
+            pass
+        return False
+
+    def _handle_captchas_and_challenges(self, page) -> dict:
+        """
+        Detects and attempts to solve/clear Cloudflare Turnstile, reCAPTCHA, and bot verification challenges.
+        Returns:
+            {"handled": bool, "blocked": bool, "message": str}
+        """
         try:
             body_text = page.locator("body").inner_text().lower()
-            is_challenge = any(k in body_text for k in [
+
+            # 1. Cloudflare WAF block detection
+            if any(k in body_text for k in ["attention required! | cloudflare", "you have been blocked", "access denied", "ray id:"]):
+                if "blocked" in body_text or "access denied" in body_text:
+                    print("🛡️ Cloudflare WAF block detected on IP/session.", flush=True)
+                    return {"handled": False, "blocked": True, "message": "Blocked by Cloudflare Security WAF (Ray ID Block)"}
+
+            # 2. Cloudflare Turnstile inside frames & main page
+            is_cf_challenge = any(k in body_text for k in [
                 "verify you are human", "checking if the site connection is secure",
-                "just a moment...", "attention required", "security verification", "robot or human",
-                "cloudflare"
+                "just a moment...", "security verification", "cloudflare"
             ])
 
-            cf_elem = page.locator('#challenge-stage input[type="checkbox"], .cf-turnstile input[type="checkbox"], #challenge-stage label, .ctp-checkbox-label, #challenge-stage, .cf-turnstile').first
-            if is_challenge or cf_elem.is_visible(timeout=800):
-                print("🛡️ Bot challenge / Cloudflare Turnstile detected on page! Attempting verification click...", flush=True)
-                for cf_sel in [
-                    '#challenge-stage input[type="checkbox"]',
-                    '.ctp-checkbox-label',
-                    '#challenge-stage label',
-                    '#challenge-stage',
-                    '.cf-turnstile',
-                    'iframe[src*="turnstile"]'
-                ]:
+            # Check frames for Turnstile
+            turnstile_clicked = False
+            for frame in page.frames:
+                f_url = frame.url.lower()
+                if any(domain in f_url for domain in ["challenges.cloudflare.com", "turnstile", "cloudflare"]):
+                    for cf_sel in ['input[type="checkbox"]', '#challenge-stage', '.ctp-checkbox-label', '#cf-stage', 'body']:
+                        try:
+                            box = frame.locator(cf_sel).first
+                            if box.is_visible(timeout=800):
+                                box.click(force=True)
+                                print(f"👉 Clicked Cloudflare Turnstile inside iframe ({frame.url[:45]}...)", flush=True)
+                                turnstile_clicked = True
+                                time.sleep(2)
+                                break
+                        except Exception:
+                            pass
+                if turnstile_clicked:
+                    break
+
+            # If not in frame, check main page
+            if not turnstile_clicked and is_cf_challenge:
+                for cf_sel in ['#challenge-stage input[type="checkbox"]', '.ctp-checkbox-label', '#challenge-stage', '.cf-turnstile']:
                     try:
                         el = page.locator(cf_sel).first
-                        if el.is_visible(timeout=500):
+                        if el.is_visible(timeout=600):
                             el.click(force=True)
-                            print(f"👉 Clicked challenge element: {cf_sel}", flush=True)
+                            print(f"👉 Clicked Cloudflare Turnstile element: {cf_sel}", flush=True)
                             time.sleep(2)
                             break
                     except Exception:
                         pass
 
-                # Poll up to 8s for challenge to clear
-                for _ in range(8):
+            if turnstile_clicked or is_cf_challenge:
+                # Poll up to 6s for challenge to clear
+                for _ in range(6):
                     time.sleep(1)
                     curr_body = page.locator("body").inner_text().lower()
                     if not any(k in curr_body for k in ["verify you are human", "checking if the site connection is secure", "just a moment..."]):
                         print("✅ Challenge cleared! Application portal loaded.", flush=True)
-                        return True
-                return False
+                        return {"handled": True, "blocked": False, "message": "Turnstile cleared"}
 
-            # Check Google reCAPTCHA
-            recaptcha = page.locator('iframe[src*="recaptcha"], iframe[title*="reCAPTCHA" i]').first
-            if recaptcha.is_visible(timeout=500):
-                print("🛡️ reCAPTCHA detected on page. Attempting to click checkbox...", flush=True)
-                try:
-                    recaptcha.click(force=True)
-                    time.sleep(2)
-                except Exception:
-                    pass
-        except Exception:
+            # 3. Google reCAPTCHA checkbox inside anchor frames
+            for frame in page.frames:
+                if "recaptcha" in frame.url and "anchor" in frame.url:
+                    try:
+                        box = frame.locator('#recaptcha-anchor, .recaptcha-checkbox').first
+                        if box.is_visible(timeout=800):
+                            print("🛡️ reCAPTCHA detected in iframe. Attempting to click checkbox...", flush=True)
+                            box.click(force=True)
+                            time.sleep(2)
+                    except Exception:
+                        pass
+
+            # 4. Check if an interactive image challenge puzzle popped up (bframe)
+            has_bframe = any("bframe" in f.url for f in page.frames) or page.locator('iframe[src*="bframe"], iframe[title*="recaptcha challenge" i]').count() > 0
+            if has_bframe:
+                print("🛡️ Interactive image CAPTCHA puzzle detected (e.g. 'Select all squares with buses').", flush=True)
+                return {"handled": False, "blocked": True, "message": "Blocked by interactive image CAPTCHA puzzle"}
+
+        except Exception as e:
             pass
-        return False
+        return {"handled": True, "blocked": False, "message": "OK"}
 
     def _find_form_target(self, page):
         """Returns the page or embedded iframe that contains the application form."""
@@ -393,117 +470,155 @@ class ExternalApplyEngine:
             pass
         return page
 
-    def _navigate_to_application_form(self, page, context, company_name: str) -> tuple:
+    def _find_and_click_apply_button(self, page, context) -> tuple:
         """
-        Uses the local Vision LLM model as the primary decision maker on every page load:
-        - Decides if there is NO_JOB (closed, expired, 404, blocked) -> marks expired immediately.
-        - Decides if there is a CAPTCHA -> solves challenge.
-        - Decides if a CLICK is needed to open the application form (e.g. Apply, Apply Now, Apply on company site) -> clicks button & tracks new tabs.
-        - Decides if FORM_READY -> proceeds directly to filling form.
+        DOM-First Search: Discovers and clicks 'Apply', 'Apply Now', 'Apply on company website',
+        handling new tabs/popups, in-page redirects, and dynamic hydration.
+        Returns:
+            (page, clicked_apply: bool)
         """
-        # 1. Dismiss cookies
-        self._dismiss_cookie_banners(page)
+        apply_selectors = [
+            'button:has-text("Apply on company website")', 'a:has-text("Apply on company website")',
+            'button:has-text("Apply on company site")', 'a:has-text("Apply on company site")',
+            'button:has-text("Apply for this job")', 'a:has-text("Apply for this job")',
+            'button:has-text("Apply to Job")', 'a:has-text("Apply to Job")',
+            'button:has-text("Apply Now")', 'a:has-text("Apply Now")',
+            'button:has-text("Apply now")', 'a:has-text("Apply now")',
+            'button:has-text("Start Application")', 'a:has-text("Start Application")',
+            'button:has-text("Apply with Resume")', 'a:has-text("Apply with Resume")',
+            'button:has-text("Apply without Resume")', 'a:has-text("Apply without Resume")',
+            'button:has-text("Apply Manually")', 'a:has-text("Apply Manually")',
+            'button:has-text("Apply")', 'a:has-text("Apply")',
+            '[data-qa*="apply" i]', '#apply_button', '.apply-button', '.apply_button',
+            'a[href*="/apply"]', 'a[href*="application"]', 'a[href*="apply"]'
+        ]
 
-        # 2. Check and handle CAPTCHA / Cloudflare
-        self._handle_captchas_and_challenges(page)
+        initial_pages = list(context.pages)
 
-        # 3. Always take a screenshot and invoke the Vision LLM to decide page state
-        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-        safe_slug = re.sub(r'[^a-zA-Z0-9]', '_', company_name or "external_job")[:25]
-        landing_screen = os.path.join(self.log_dir, f"{ts}_{safe_slug}_landing.png")
-        try:
-            page.screenshot(path=landing_screen)
-            print(f"👁️ [Vision LLM ({self.vision_model})] Evaluating page state: deciding whether to click, if no jobs exist, or if form is ready...", flush=True)
-            v_analysis = self._analyze_screenshot(
-                landing_screen,
-                "Analyze this webpage screenshot carefully.\n"
-                "Determine the status of this job application page:\n"
-                "- NO_JOB: If the job posting is closed, expired, filled, inactive, 404 error, blocked, or this is a general search page with no specific job opening.\n"
-                "- CAPTCHA: If a human verification / Cloudflare challenge is blocking.\n"
-                "- CLICK_APPLY: If this is a job description or portal where the user must click an 'Apply' / 'Apply Now' / 'Apply on company website' / 'Start Application' button to open the form.\n"
-                "- FORM_READY: If an active job application form (asking for name, email, resume, etc.) is already open.\n\n"
-                "State one keyword: NO_JOB, CAPTCHA, CLICK_APPLY, or FORM_READY, followed by 1 concise sentence."
-            )
-            print(f"👁️ [Vision LLM ({self.vision_model})] Page Decision: {v_analysis[:180]}...", flush=True)
-            v_upper = v_analysis.upper()
-
-            # Decision 1: NO JOB (expired, closed, 404, blocked)
-            if any(no_job_kw in v_upper for no_job_kw in [
-                "NO_JOB", "CLOSED", "EXPIRED", "NOT FOUND",
-                "NO LONGER AVAILABLE", "POSITION HAS BEEN FILLED", "JOB NOT FOUND", "UNABLE TO ACCESS", "YOU HAVE BEEN BLOCKED"
-            ]) and not any(ok_kw in v_upper for ok_kw in ["FORM_READY", "INPUT FIELDS", "SUBMIT APPLICATION"]):
-                print(f"🚫 [Vision LLM ({self.vision_model})] Confirmed NO ACTIVE JOB on page (closed/expired/404).", flush=True)
-                return page, {"success": False, "expired": True, "message": f"Vision LLM: No active job ({v_analysis[:100]})"}
-
-            # Decision 2: CAPTCHA
-            if "DECISION: CAPTCHA" in v_upper or ("CAPTCHA" in v_upper and any(k in v_upper for k in ["CLOUDFLARE", "VERIFY YOU ARE HUMAN", "TURNSTILE"])):
-                print(f"🛡️ [Vision LLM ({self.vision_model})] Identified CAPTCHA challenge on page.", flush=True)
-                self._handle_captchas_and_challenges(page)
-
-            # Decision 3: FORM_READY
-            has_form = page.locator('input[type="file"], #first_name, #resume, form[action*="apply" i]').count() > 0
-            if "FORM_READY" in v_upper and has_form:
-                print(f"📝 [Vision LLM ({self.vision_model})] Application form is already active and ready to fill.", flush=True)
-                return page, None
-
-        except Exception as e:
-            print(f"⚠️ Vision landing check notice: {e}", flush=True)
-
-        # Decision 4: CLICK_APPLY (Search for and click Apply button if on description page)
-        has_form = page.locator('input[type="file"], #first_name, #resume, form[action*="apply" i]').count() > 0
-        if not has_form:
-            print(f"👉 [Vision LLM ({self.vision_model})] Decided to click Apply button on job description page.", flush=True)
-            apply_selectors = [
-                'button:has-text("Apply on company website")', 'a:has-text("Apply on company website")',
-                'button:has-text("Apply on company site")', 'a:has-text("Apply on company site")',
-                'button:has-text("Apply for this job")', 'a:has-text("Apply for this job")',
-                'button:has-text("Apply to Job")', 'a:has-text("Apply to Job")',
-                'button:has-text("Apply now")', 'a:has-text("Apply now")',
-                'button:has-text("Apply Now")', 'a:has-text("Apply Now")',
-                'button:has-text("Start Application")', 'a:has-text("Start Application")',
-                'button:has-text("Apply with Resume")', 'a:has-text("Apply with Resume")',
-                'button:has-text("Apply without Resume")', 'a:has-text("Apply without Resume")',
-                'button:has-text("Apply")', 'a:has-text("Apply")',
-                '[data-qa="apply-button"]', '#apply_button', '.apply-button',
-                'a[href*="/apply"]', 'a[href*="apply"]'
-            ]
-
-            initial_page_count = len(context.pages)
-            clicked_apply = False
-
+        # Try visible buttons in current fold first; if none, scroll down to check bottom fold
+        for scroll_attempt in range(2):
             for sel in apply_selectors:
                 try:
                     candidates = page.locator(sel).all()
                     for btn in candidates:
                         if not btn.is_visible():
                             continue
-                        btn_text = (btn.inner_text() or btn.get_attribute("value") or "").strip().lower()
-                        if any(bad in btn_text for bad in ["cookie", "cancel", "close", "sign in", "log in"]):
+                        btn_text = (btn.inner_text() or btn.get_attribute("value") or btn.get_attribute("aria-label") or "").strip().lower()
+                        if any(bad in btn_text for bad in ["cookie", "cancel", "close", "sign in", "log in", "manage", "search"]):
                             continue
-                        print(f"👉 Found and clicking Apply button: '{btn.inner_text().strip()}'", flush=True)
-                        btn.click(force=True)
-                        clicked_apply = True
-                        break
-                    if clicked_apply:
-                        break
+                        btn_display = (btn.inner_text() or btn.get_attribute("value") or "Apply").strip()
+                        print(f"👉 Found and clicking Apply button: '{btn_display}'", flush=True)
+
+                        # Click with popup listener
+                        try:
+                            with context.expect_page(timeout=4000) as new_page_info:
+                                btn.click(timeout=3000)
+                            new_page = new_page_info.value
+                            print(f"🔀 Switched to newly opened application tab: {new_page.url}", flush=True)
+                            try:
+                                new_page.wait_for_load_state("domcontentloaded", timeout=15000)
+                            except Exception:
+                                pass
+                            self._dismiss_cookie_banners(new_page)
+                            self._handle_captchas_and_challenges(new_page)
+                            return new_page, True
+                        except Exception:
+                            # If no expect_page event fired, check if pages count grew or navigated
+                            time.sleep(2)
+                            if len(context.pages) > len(initial_pages):
+                                new_page = context.pages[-1]
+                                print(f"🔀 Detected new tab in context: {new_page.url}", flush=True)
+                                try:
+                                    new_page.wait_for_load_state("domcontentloaded", timeout=15000)
+                                except Exception:
+                                    pass
+                                self._dismiss_cookie_banners(new_page)
+                                self._handle_captchas_and_challenges(new_page)
+                                return new_page, True
+                            else:
+                                # Navigated on same page or expanded inline form
+                                try:
+                                    page.wait_for_load_state("domcontentloaded", timeout=8000)
+                                except Exception:
+                                    pass
+                                self._dismiss_cookie_banners(page)
+                                self._handle_captchas_and_challenges(page)
+                                return page, True
                 except Exception:
                     continue
 
-            if clicked_apply:
-                time.sleep(2)
-                # Check if a new tab opened (target="_blank" to external ATS)
-                if len(context.pages) > initial_page_count:
-                    new_page = context.pages[-1]
-                    try:
-                        new_page.wait_for_load_state("domcontentloaded", timeout=15000)
-                    except Exception:
-                        pass
-                    print(f"🔀 Switched to newly opened application tab: {new_page.url}", flush=True)
-                    page = new_page
-                    self._dismiss_cookie_banners(page)
-                    self._handle_captchas_and_challenges(page)
+            # Scroll down half page to reveal any sticky or bottom apply buttons
+            if scroll_attempt == 0:
+                try:
+                    page.evaluate("window.scrollBy(0, 600)")
+                    time.sleep(1)
+                except Exception:
+                    pass
 
-                self._wait_for_form_hydration(page)
+        return page, False
+
+    def _navigate_to_application_form(self, page, context, company_name: str) -> tuple:
+        """
+        DOM-First Navigation with Vision Verification:
+        1. Checks for CAPTCHA/bot challenges and handles them.
+        2. Checks if an application form is already present on page.
+        3. If not, finds and clicks 'Apply' / 'Apply Now' buttons across the DOM (with tab tracking).
+        4. If no form and no button found, uses Vision LLM with strict verdict parsing.
+        """
+        # 1. Dismiss cookies
+        self._dismiss_cookie_banners(page)
+
+        # 2. Check and handle CAPTCHA / Cloudflare
+        c_status = self._handle_captchas_and_challenges(page)
+        if c_status.get("blocked"):
+            return page, {"success": False, "captcha_blocked": True, "message": c_status.get("message")}
+
+        # 3. Check if application form is ALREADY open and active
+        if self._is_form_active(page):
+            print(f"📝 Application form is already active and ready to fill.", flush=True)
+            self._wait_for_form_hydration(page)
+            return page, None
+
+        # 4. Search for and click 'Apply' button in the DOM (with scroll & tab tracking)
+        page, clicked_apply = self._find_and_click_apply_button(page, context)
+        if clicked_apply:
+            self._wait_for_form_hydration(page)
+            if self._is_form_active(page):
+                print(f"📝 Successfully reached application form after clicking Apply button.", flush=True)
+                return page, None
+
+        # 5. Fallback: If no form and no apply button were found, consult Vision LLM
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        safe_slug = re.sub(r'[^a-zA-Z0-9]', '_', company_name or "external_job")[:25]
+        landing_screen = os.path.join(self.log_dir, f"{ts}_{safe_slug}_landing.png")
+        try:
+            page.screenshot(path=landing_screen)
+            print(f"👁️ [Vision LLM ({self.vision_model})] Evaluating page state (no form/apply button found in DOM)...", flush=True)
+            v_analysis = self._analyze_screenshot(
+                landing_screen,
+                "Analyze this webpage screenshot carefully.\n"
+                "Determine if this job opening is CLOSED/EXPIRED or if it is an ACTIVE job opening.\n\n"
+                "Reply strictly in this format:\n"
+                "VERDICT: CLOSED (if 404, closed, expired, filled, or no job exists)\n"
+                "or\n"
+                "VERDICT: ACTIVE (if open or active application)\n"
+                "REASON: 1 short sentence explanation."
+            )
+            print(f"👁️ [Vision LLM ({self.vision_model})] Page Decision: {v_analysis[:180]}...", flush=True)
+
+            # Strict verdict parsing to avoid chain-of-thought false positives
+            verdict = ""
+            for line in reversed([l.strip() for l in v_analysis.splitlines() if l.strip()]):
+                if line.upper().startswith("VERDICT:"):
+                    verdict = line.upper().split("VERDICT:")[-1].strip()
+                    break
+
+            if verdict in ["CLOSED", "EXPIRED", "NOT FOUND"]:
+                print(f"🚫 [Vision LLM ({self.vision_model})] Confirmed NO ACTIVE JOB on page (closed/expired/404).", flush=True)
+                return page, {"success": False, "expired": True, "message": f"Vision LLM: {v_analysis[:120]}"}
+
+        except Exception as e:
+            print(f"⚠️ Vision landing check notice: {e}", flush=True)
 
         return page, None
 
@@ -811,22 +926,114 @@ class ExternalApplyEngine:
             except Exception:
                 pass
 
+        # Robust Radio Button Groups (handles Jobvite, Greenhouse, Workday, Lever)
         radios = page.locator('input[type="radio"]').all()
+        radio_groups = {}
         for r in radios:
             try:
                 if not r.is_visible():
                     continue
-                label_txt = r.evaluate('''el => {
-                    let p = el.closest('label') || el.parentElement;
-                    return (p ? p.innerText : '').toLowerCase();
-                }''')
-                if label_txt in ["yes", "true", "authorized"]:
-                    r.click()
+                name = r.get_attribute("name") or "unnamed"
+                radio_groups.setdefault(name, []).append(r)
+            except Exception:
+                continue
+
+        for name, group in radio_groups.items():
+            try:
+                # Check if an option in this radio group is already checked
+                if any(r.is_checked() for r in group):
+                    continue
+
+                parent_txt = ""
+                try:
+                    parent_txt = group[0].evaluate('''el => {
+                        let p = el.closest('.form-group, .field-wrapper, fieldset, tr, .radio-group, div') || el.parentElement;
+                        return p ? p.innerText.toLowerCase() : '';
+                    }''')
+                except Exception:
+                    pass
+
+                chosen = None
+                for r in group:
+                    lbl = r.evaluate('''el => {
+                        let p = el.closest('label') || el.parentElement;
+                        return p ? p.innerText.toLowerCase() : '';
+                    }''')
+                    if any(k in parent_txt for k in ["sponsorship", "visa", "require sponsor"]):
+                        if any(no_k in lbl for no_k in ["no", "never", "not require"]):
+                            chosen = r
+                            break
+                    elif any(k in parent_txt for k in ["authorized", "eligible", "relocate", "driver", "travel", "license", "agree"]):
+                        if "yes" in lbl or "authorized" in lbl:
+                            chosen = r
+                            break
+                    elif "yes" in lbl:
+                        chosen = r
+                        break
+
+                if not chosen and group:
+                    # Default to first option so required radio validation passes
+                    chosen = group[0]
+
+                if chosen:
+                    chosen.click(force=True)
                     checked += 1
             except Exception:
-                pass
+                continue
 
         return checked
+
+    def _handle_segmented_button_toggles(self, page) -> int:
+        """Handles button-based Yes/No toggles common in Ashby and Workday."""
+        handled = 0
+        try:
+            btn_toggles = page.locator('button:has-text("Yes")').all()
+            for btn in btn_toggles:
+                try:
+                    if not btn.is_visible():
+                        continue
+                    classes = btn.get_attribute("class") or ""
+                    aria = btn.get_attribute("aria-pressed") or btn.get_attribute("aria-selected") or ""
+                    if "active" in classes.lower() or aria == "true":
+                        continue
+                    txt = btn.inner_text().strip().lower()
+                    if txt == "yes":
+                        btn.click(force=True)
+                        handled += 1
+                except Exception:
+                    continue
+        except Exception:
+            pass
+        return handled
+
+    def _handle_ashby_and_specialty_inputs(self, page):
+        """Fills Ashby location combobox and date pickers."""
+        try:
+            # 1. Location combobox (e.g. 'Start typing...')
+            loc_inputs = page.locator('input[placeholder*="Start typing" i]').all()
+            for inp in loc_inputs:
+                try:
+                    if inp.is_visible() and not inp.input_value():
+                        inp.click()
+                        inp.fill(self.profile.get("location") or "Remote")
+                        time.sleep(0.5)
+                        inp.press("ArrowDown")
+                        inp.press("Enter")
+                except Exception:
+                    pass
+
+            # 2. Date pickers (e.g. 'Pick date...', 'Start date')
+            date_inputs = page.locator('input[placeholder*="Pick date" i], input[placeholder*="YYYY" i], input[name*="start_date" i]').all()
+            for d_inp in date_inputs:
+                try:
+                    if d_inp.is_visible() and not d_inp.input_value():
+                        tomorrow = (datetime.now() + timedelta(days=1)).strftime("%m/%d/%Y")
+                        d_inp.fill(tomorrow)
+                        d_inp.press("Enter")
+                except Exception:
+                    pass
+        except Exception:
+            pass
 
     def _handle_question_checkbox_groups(self, page):
         """Ensures question groups (e.g. Compensation range checkboxes on Greenhouse) have an option picked."""
@@ -1029,7 +1236,16 @@ class ExternalApplyEngine:
                 self._fill_native_dropdowns(target)
                 self._handle_checkboxes_and_radios(target)
                 self._handle_question_checkbox_groups(target)
+                self._handle_segmented_button_toggles(target)
+                self._handle_ashby_and_specialty_inputs(target)
                 self._fill_remaining_required_fields(target)
+
+                # Scroll down to ensure submit button is in view
+                try:
+                    target.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+                    time.sleep(0.5)
+                except Exception:
+                    pass
 
                 # Check if submit button is now visible
                 submit_btn = self._find_submit_button(target)
@@ -1039,6 +1255,13 @@ class ExternalApplyEngine:
                 break
 
         if not submit_btn:
+            # Final scroll down attempt in case submit is at bottom of page
+            try:
+                target.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+                time.sleep(1)
+                submit_btn = self._find_submit_button(target)
+            except Exception:
+                pass
             print("🚫 No submit button found on page (portal directory, external index, or closed).", flush=True)
             return {
                 "success": False,
