@@ -15,6 +15,8 @@ Support me: https://github.com/sponsors/GodsScion
 version:    26.01.20.5.08
 '''
 
+import sys
+import os
 from modules.helpers import get_default_temp_profile, make_directories
 from config.settings import run_in_background, stealth_mode, disable_extensions, safe_mode, file_name, failed_file_name, logs_folder_path, generated_resume_path
 from config.questions import default_resume_path
@@ -53,7 +55,10 @@ def createChromeSession(isRetry: bool = False):
         import subprocess, re
         major_version = None
         try:
-            cmd = "/Applications/Google\\ Chrome.app/Contents/MacOS/Google\\ Chrome --version"
+            if sys.platform == 'darwin':
+                cmd = "/Applications/Google\\ Chrome.app/Contents/MacOS/Google\\ Chrome --version"
+            else:
+                cmd = "google-chrome --version"
             out = subprocess.check_output(cmd, shell=True).decode()
             match = re.search(r'Google Chrome (\d+)', out)
             if match:
@@ -75,7 +80,10 @@ def createChromeSession(isRetry: bool = False):
                 retry_options.add_argument("--no-sandbox")
                 retry_options.add_argument("--disable-dev-shm-usage")
             retry_options.add_argument(f"--user-data-dir={get_default_temp_profile()}")
-            driver = uc.Chrome(options=retry_options)
+            if major_version:
+                driver = uc.Chrome(options=retry_options, version_main=major_version)
+            else:
+                driver = uc.Chrome(options=retry_options)
     else: 
         driver = webdriver.Chrome(options=options)
     driver.maximize_window()
@@ -90,12 +98,18 @@ except SessionNotCreatedException as e:
     critical_error_log("Failed to create Chrome Session, retrying with guest profile", e)
     options, driver, actions, wait = createChromeSession(True)
 except Exception as e:
-    msg = 'Seems like Google Chrome is out dated. Update browser and try again! \n\n\nIf issue persists, try Safe Mode. Set, safe_mode = True in config.py \n\nPlease check GitHub discussions/support for solutions https://github.com/GodsScion/Auto_job_applier_linkedIn \n                                   OR \nReach out in discord ( https://discord.gg/fFp7uUzWCY )'
-    if isinstance(e,TimeoutError): msg = "Couldn't download Chrome-driver. Set stealth_mode = False in config!"
+    msg = f'Error initializing Chrome session: {e}\n\nIf issue persists, try Safe Mode. Set safe_mode = True in config.py'
+    if isinstance(e, TimeoutError): msg = "Couldn't download Chrome-driver. Set stealth_mode = False in config!"
     print_lg(msg)
     critical_error_log("In Opening Chrome", e)
-    from pyautogui import alert
-    alert(msg, "Error in opening chrome")
-    try: driver.quit()
-    except NameError: exit()
+    try:
+        from pyautogui import alert
+        alert(msg, "Error in opening chrome")
+    except Exception:
+        pass
+    try:
+        if driver: driver.quit()
+    except Exception:
+        pass
+    exit(1)
     
